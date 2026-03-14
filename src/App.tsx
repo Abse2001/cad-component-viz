@@ -41,13 +41,28 @@ function parseInput(text: string): {
   }
 }
 
-function useCadGeometry(modelUrl: string, fallback: THREE.BufferGeometry) {
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedValue(value);
+    }, delayMs);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [delayMs, value]);
+
+  return debouncedValue;
+}
+
+function useCadGeometry(modelUrl: string) {
   const [state, setState] = useState<{
-    geometry: THREE.BufferGeometry;
+    geometry: THREE.BufferGeometry | null;
     status: "idle" | "loading" | "ready" | "fallback";
     message: string;
   }>({
-    geometry: fallback,
+    geometry: null,
     status: modelUrl ? "loading" : "fallback",
     message: modelUrl
       ? "Loading OBJ model..."
@@ -56,21 +71,18 @@ function useCadGeometry(modelUrl: string, fallback: THREE.BufferGeometry) {
 
   useEffect(() => {
     let disposed = false;
-    const fallbackClone = fallback.clone();
 
     if (!modelUrl) {
       setState({
-        geometry: fallbackClone,
+        geometry: null,
         status: "fallback",
         message: "Using fallback box from size.",
       });
-      return () => {
-        fallbackClone.dispose();
-      };
+      return;
     }
 
     setState({
-      geometry: fallbackClone,
+      geometry: null,
       status: "loading",
       message: "Loading OBJ model...",
     });
@@ -93,14 +105,13 @@ function useCadGeometry(modelUrl: string, fallback: THREE.BufferGeometry) {
           status: "ready",
           message: "OBJ loaded successfully.",
         });
-        fallbackClone.dispose();
       })
       .catch((error: unknown) => {
         if (disposed || controller.signal.aborted) {
           return;
         }
         setState({
-          geometry: fallbackClone,
+          geometry: null,
           status: "fallback",
           message:
             error instanceof Error
@@ -113,9 +124,14 @@ function useCadGeometry(modelUrl: string, fallback: THREE.BufferGeometry) {
       disposed = true;
       controller.abort();
     };
-  }, [fallback, modelUrl]);
+  }, [modelUrl]);
 
-  useEffect(() => () => state.geometry.dispose(), [state.geometry]);
+  useEffect(
+    () => () => {
+      state.geometry?.dispose();
+    },
+    [state.geometry],
+  );
 
   return state;
 }
@@ -134,8 +150,14 @@ function SceneCanvas({
   ) => { hoverTargets?: HoverTarget[]; overlayObjects?: THREE.Object3D[] } | void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const cameraRef = useRef<THREE.Camera | null>(null);
+  const controlsRef = useRef<ReturnType<typeof createControls> | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const overlaySceneRef = useRef<THREE.Scene | null>(null);
+  const hoverTargetsRef = useRef<HoverTarget[]>([]);
   const [projection, setProjection] = useState<"perspective" | "orthographic">(
-    "perspective",
+    "orthographic",
   );
   const [viewPreset, setViewPreset] = useState<
     "side" | "front" | "top" | "corner"
@@ -145,6 +167,25 @@ function SceneCanvas({
     y: number;
     lines: string[];
   } | null>(null);
+
+  const disposeScene = (scene: THREE.Scene | null) => {
+    if (!scene) {
+      return;
+    }
+    scene.traverse((object: THREE.Object3D) => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        if (Array.isArray(object.material)) {
+          for (const material of object.material) {
+            material.dispose();
+          }
+        } else {
+          object.material.dispose();
+        }
+      }
+    });
+    scene.clear();
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -195,11 +236,11 @@ function SceneCanvas({
     const controls = createControls(camera, canvas);
     const scene = new THREE.Scene();
     const overlayScene = new THREE.Scene();
-    const buildResult = buildScene(scene);
-    const hoverTargets = buildResult?.hoverTargets ?? [];
-    for (const object of buildResult?.overlayObjects ?? []) {
-      overlayScene.add(object);
-    }
+    rendererRef.current = renderer;
+    cameraRef.current = camera;
+    controlsRef.current = controls;
+    sceneRef.current = scene;
+    overlaySceneRef.current = overlayScene;
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
 
@@ -212,7 +253,7 @@ function SceneCanvas({
       pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const intersections = raycaster.intersectObjects(
-        hoverTargets.map((target) => target.object),
+        hoverTargetsRef.current.map((target) => target.object),
         true,
       );
 
@@ -222,7 +263,7 @@ function SceneCanvas({
         return;
       }
 
-      const hit = hoverTargets.find((target) =>
+      const hit = hoverTargetsRef.current.find((target) =>
         intersections.some(
           (intersection) =>
             intersection.object === target.object ||
@@ -278,31 +319,30 @@ function SceneCanvas({
       canvas.removeEventListener("pointerleave", onPointerLeave);
       controls.dispose();
       renderer.dispose();
-      scene.traverse((object: THREE.Object3D) => {
-        if (object instanceof THREE.Mesh) {
-          object.geometry.dispose();
-          if (Array.isArray(object.material)) {
-            for (const material of object.material) {
-              material.dispose();
-            }
-          } else {
-            object.material.dispose();
-          }
-        }
-      });
-      overlayScene.traverse((object: THREE.Object3D) => {
-        if (object instanceof THREE.Mesh) {
-          object.geometry.dispose();
-          if (Array.isArray(object.material)) {
-            for (const material of object.material) {
-              material.dispose();
-            }
-          } else {
-            object.material.dispose();
-          }
-        }
-      });
+      disposeScene(scene);
+      disposeScene(overlayScene);
+      hoverTargetsRef.current = [];
+      rendererRef.current = null;
+      cameraRef.current = null;
+      controlsRef.current = null;
+      sceneRef.current = null;
+      overlaySceneRef.current = null;
     };
+  }, [projection, up, viewPreset]);
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const overlayScene = overlaySceneRef.current;
+    if (!scene || !overlayScene) {
+      return;
+    }
+    disposeScene(scene);
+    disposeScene(overlayScene);
+    const buildResult = buildScene(scene);
+    hoverTargetsRef.current = buildResult?.hoverTargets ?? [];
+    for (const object of buildResult?.overlayObjects ?? []) {
+      overlayScene.add(object);
+    }
   }, [buildScene, projection, up, viewPreset]);
 
   return (
@@ -467,16 +507,21 @@ function App() {
   );
   const [importError, setImportError] = useState<string | null>(null);
 
-  const fallbackGeometry = useMemo(() => buildFallbackGeometry(cad), [cad]);
-  const { geometry, status, message } = useCadGeometry(
-    cad.model_obj_url,
-    fallbackGeometry,
+  const debouncedCad = useDebouncedValue(cad, 350);
+  const debouncedBoardThickness = useDebouncedValue(boardThickness, 350);
+  const fallbackGeometry = useMemo(
+    () => buildFallbackGeometry(debouncedCad),
+    [debouncedCad],
   );
-  const placement = useMemo(() => computePlacement(cad), [cad]);
+  const { geometry: fetchedGeometry, status, message } = useCadGeometry(
+    debouncedCad.model_obj_url,
+  );
+  const geometry = fetchedGeometry ?? fallbackGeometry;
+  const placement = useMemo(() => computePlacement(debouncedCad), [debouncedCad]);
   const geometryBounds = useMemo(() => getGeometryBounds(geometry), [geometry]);
   const modelUp = useMemo(
-    () => directionToVector(cad.model_board_normal_direction),
-    [cad.model_board_normal_direction],
+    () => directionToVector(debouncedCad.model_board_normal_direction),
+    [debouncedCad.model_board_normal_direction],
   );
   const generatedJson = useMemo(() => JSON.stringify(cad, null, 2), [cad]);
   const formatVec3 = (vector: THREE.Vector3) =>
@@ -526,7 +571,7 @@ function App() {
   const modelScene = useMemo(
     () => (scene: THREE.Scene) => {
       addDefaultLights(scene);
-      scene.add(makeGrid(90, 36, cad.model_board_normal_direction));
+      scene.add(makeGrid(90, 36, debouncedCad.model_board_normal_direction));
       scene.add(makeAxesToBadgePositions(geometryBounds.boundingBox));
       scene.add(
         new THREE.Mesh(
@@ -542,12 +587,12 @@ function App() {
       scene.add(makeAxisBadges(geometryBounds.boundingBox));
       const modelOriginMarker = makeHoverMarker(placement.modelOrigin, [
         `Model Origin ${formatVec3(placement.modelOrigin)}`,
-        `Model Origin Alignment: ${cad.model_origin_alignment}`,
+        `Model Origin Alignment: ${debouncedCad.model_origin_alignment}`,
       ]);
       scene.add(
         makeBoardNormalArrow(
           placement.modelOrigin,
-          cad.model_board_normal_direction,
+          debouncedCad.model_board_normal_direction,
         ),
       );
       return {
@@ -556,8 +601,8 @@ function App() {
       };
     },
     [
-      cad.model_board_normal_direction,
-      cad.model_origin_alignment,
+      debouncedCad.model_board_normal_direction,
+      debouncedCad.model_origin_alignment,
       geometry,
       geometryBounds.boundingBox,
       placement.modelOrigin,
@@ -568,7 +613,7 @@ function App() {
     () => (scene: THREE.Scene) => {
       addDefaultLights(scene);
       scene.add(makeGrid(90, 36, "z+"));
-      scene.add(makeBoard(boardThickness));
+      scene.add(makeBoard(debouncedBoardThickness));
 
       const placed = new THREE.Group();
       placed.rotation.copy(placement.rotation);
@@ -587,13 +632,13 @@ function App() {
       scene.add(placed);
       placed.updateMatrixWorld(true);
       const boardPosition = new THREE.Vector3(
-        cad.position.x,
-        cad.position.y,
-        cad.position.z,
+        debouncedCad.position.x,
+        debouncedCad.position.y,
+        debouncedCad.position.z,
       );
       const boardPositionMarker = makeHoverMarker(boardPosition, [
         `Cad Component Position ${formatVec3(boardPosition)}`,
-        `Anchor Alignment: ${cad.anchor_alignment}`,
+        `Anchor Alignment: ${debouncedCad.anchor_alignment}`,
       ]);
 
       const placedBounds = geometryBounds.boundingBox
@@ -607,11 +652,11 @@ function App() {
       };
     },
     [
-      cad.anchor_alignment,
-      boardThickness,
-      cad.position.x,
-      cad.position.y,
-      cad.position.z,
+      debouncedCad.anchor_alignment,
+      debouncedBoardThickness,
+      debouncedCad.position.x,
+      debouncedCad.position.y,
+      debouncedCad.position.z,
       geometry,
       geometryBounds.boundingBox,
       placement.rotation,
@@ -742,7 +787,7 @@ function App() {
       <section className="viewports">
         <SceneCanvas
           title="Model space"
-          subtitle={`${cad.model_board_normal_direction} is treated as board-up in the raw model.`}
+          subtitle={`${debouncedCad.model_board_normal_direction} is treated as board-up in the raw model.`}
           up={modelUp}
           buildScene={modelScene}
         />
