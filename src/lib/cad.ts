@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import type { OcctModule } from "./occt";
 import type { Alignment, AxisDirection, CadComponentInput } from "../types";
 
 export const NORMAL_OPTIONS: AxisDirection[] = [
@@ -129,6 +131,146 @@ export function parseOBJ(text: string): THREE.BufferGeometry {
 	geometry.computeVertexNormals();
 	geometry.computeBoundingBox();
 	return geometry;
+}
+
+function hasSTEPHeader(content: ArrayBuffer): boolean {
+	const text = new TextDecoder().decode(content.slice(0, 512)).toUpperCase();
+	return text.includes("ISO-10303-21") || text.includes("FILE_SCHEMA");
+}
+
+export type ModelFormat = "obj" | "step";
+
+let occtModulePromise: Promise<OcctModule> | null = null;
+
+function getModelExtension(nameOrUrl: string): string {
+	const normalized = nameOrUrl.trim().toLowerCase();
+	if (!normalized) {
+		return "";
+	}
+
+	if (normalized.startsWith("blob:")) {
+		return "";
+	}
+
+	try {
+		const parsed = new URL(normalized, window.location.href);
+		const pathname = parsed.pathname.toLowerCase();
+		return pathname.split(".").pop() ?? "";
+	} catch {
+		return normalized.split("?")[0]?.split("#")[0]?.split(".").pop() ?? "";
+	}
+}
+
+export function detectModelFormat(nameOrUrl: string): ModelFormat | null {
+	const extension = getModelExtension(nameOrUrl);
+	if (extension === "obj") {
+		return "obj";
+	}
+	if (extension === "step" || extension === "stp") {
+		return "step";
+	}
+	return null;
+}
+
+export async function parseModelFromText(
+	content: string,
+	format: ModelFormat,
+): Promise<THREE.BufferGeometry> {
+	if (format === "obj") {
+		return parseOBJ(content);
+	}
+	throw new Error(`Text parsing is not supported for ${format.toUpperCase()} files.`);
+}
+
+export async function parseModelFromBuffer(
+	content: ArrayBuffer,
+	format: ModelFormat,
+): Promise<THREE.BufferGeometry> {
+	if (format === "obj") {
+		return parseOBJ(new TextDecoder().decode(content));
+	}
+	if (format === "step") {
+		return parseSTEP(content);
+	}
+	throw new Error("Unsupported model format.");
+}
+
+export async function parseModelFromUnknownBuffer(
+	content: ArrayBuffer,
+): Promise<{ geometry: THREE.BufferGeometry; format: ModelFormat }> {
+	if (hasSTEPHeader(content)) {
+		return {
+			geometry: await parseSTEP(content),
+			format: "step",
+		};
+	}
+
+	const text = new TextDecoder().decode(content);
+	const geometry = parseOBJ(text);
+	const positionAttribute = geometry.getAttribute("position");
+	if (positionAttribute && positionAttribute.count > 0) {
+		return {
+			geometry,
+			format: "obj",
+		};
+	}
+
+	geometry.dispose();
+
+	throw new Error("Could not detect model format. Use .obj, .step, or .stp.");
+}
+
+export async function parseSTEP(content: ArrayBuffer): Promise<THREE.BufferGeometry> {
+	const module = await loadOcctModule();
+	const result = module.ReadStepFile(new Uint8Array(content), {
+		linearUnit: "millimeter",
+		linearDeflectionType: "bounding_box_ratio",
+		linearDeflection: 0.001,
+		angularDeflection: 0.5,
+	});
+
+	if (!result.success || result.meshes.length === 0) {
+		throw new Error("STEP import failed.");
+	}
+
+	const geometries = result.meshes.map((mesh) => {
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute(
+			"position",
+			new THREE.Float32BufferAttribute(mesh.attributes.position.array, 3),
+		);
+		geometry.setIndex(mesh.index.array);
+		if (mesh.attributes.normal) {
+			geometry.setAttribute(
+				"normal",
+				new THREE.Float32BufferAttribute(mesh.attributes.normal.array, 3),
+			);
+		} else {
+			geometry.computeVertexNormals();
+		}
+		return geometry;
+	});
+
+	const mergedGeometry = mergeGeometries(geometries, false);
+	for (const geometry of geometries) {
+		if (geometry !== mergedGeometry) {
+			geometry.dispose();
+		}
+	}
+
+	if (!mergedGeometry) {
+		throw new Error("STEP import returned incompatible mesh data.");
+	}
+
+	mergedGeometry.computeBoundingBox();
+	return mergedGeometry;
+}
+
+async function loadOcctModule(): Promise<OcctModule> {
+	if (!occtModulePromise) {
+		occtModulePromise = import("./occt").then(({ getOcctModule }) => getOcctModule());
+	}
+	return occtModulePromise;
 }
 
 export function computePlacement(input: Required<CadComponentInput>) {

@@ -5,10 +5,12 @@ import {
   NORMAL_OPTIONS,
   buildFallbackGeometry,
   computePlacement,
+  detectModelFormat,
   directionToVector,
   getGeometryBounds,
   normalizeCadComponent,
-  parseOBJ,
+  parseModelFromBuffer,
+  parseModelFromUnknownBuffer,
 } from "./lib/cad";
 import {
   addDefaultLights,
@@ -26,6 +28,11 @@ import {
 } from "./lib/scene";
 import { SAMPLE_CAD_COMPONENT } from "./sampleCadComponent";
 import type { Alignment, AxisDirection, CadComponentInput } from "./types";
+
+type ModelSource =
+  | { kind: "none" }
+  | { kind: "url"; value: string }
+  | { kind: "file"; file: File };
 
 function parseInput(text: string): {
   value: CadComponentInput | null;
@@ -56,23 +63,34 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   return debouncedValue;
 }
 
-function useCadGeometry(modelUrl: string) {
+function getIdleMessage(source: ModelSource): string {
+  if (source.kind === "none") {
+    return "Using fallback box from size.";
+  }
+  const format = detectModelFormat(
+    source.kind === "file" ? source.file.name : source.value,
+  );
+  if (!format) {
+    return "Loading model and detecting format...";
+  }
+  return `Loading ${format.toUpperCase()} model...`;
+}
+
+function useCadGeometry(source: ModelSource) {
   const [state, setState] = useState<{
     geometry: THREE.BufferGeometry | null;
     status: "idle" | "loading" | "ready" | "fallback";
     message: string;
   }>({
     geometry: null,
-    status: modelUrl ? "loading" : "fallback",
-    message: modelUrl
-      ? "Loading OBJ model..."
-      : "Using fallback box from size.",
+    status: source.kind === "none" ? "fallback" : "loading",
+    message: getIdleMessage(source),
   });
 
   useEffect(() => {
     let disposed = false;
 
-    if (!modelUrl) {
+    if (source.kind === "none") {
       setState({
         geometry: null,
         status: "fallback",
@@ -81,21 +99,37 @@ function useCadGeometry(modelUrl: string) {
       return;
     }
 
+    const sourceName = source.kind === "file" ? source.file.name : source.value;
+    const format = detectModelFormat(sourceName);
+
     setState({
       geometry: null,
       status: "loading",
-      message: "Loading OBJ model...",
+      message: format
+        ? `Loading ${format.toUpperCase()} model...`
+        : "Loading model and detecting format...",
     });
 
     const controller = new AbortController();
-    fetch(modelUrl, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Failed to fetch OBJ (${response.status})`);
+    const readSource = async () => {
+      if (source.kind === "file") {
+        return source.file.arrayBuffer();
+      }
+      const response = await fetch(source.value, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch model (${response.status})`);
+      }
+      return response.arrayBuffer();
+    };
+
+    readSource()
+      .then(async (buffer) => {
+        if (format) {
+          return { geometry: await parseModelFromBuffer(buffer, format), format };
         }
-        return parseOBJ(await response.text());
+        return parseModelFromUnknownBuffer(buffer);
       })
-      .then((geometry) => {
+      .then(({ geometry, format: resolvedFormat }) => {
         if (disposed) {
           geometry.dispose();
           return;
@@ -103,7 +137,10 @@ function useCadGeometry(modelUrl: string) {
         setState({
           geometry,
           status: "ready",
-          message: "OBJ loaded successfully.",
+          message:
+            source.kind === "file"
+              ? `${resolvedFormat.toUpperCase()} loaded from ${source.file.name}.`
+              : `${resolvedFormat.toUpperCase()} loaded successfully.`,
         });
       })
       .catch((error: unknown) => {
@@ -116,7 +153,7 @@ function useCadGeometry(modelUrl: string) {
           message:
             error instanceof Error
               ? `${error.message}. Falling back to size box.`
-              : "Failed to load OBJ. Falling back to size box.",
+              : "Failed to load model. Falling back to size box.",
         });
       });
 
@@ -124,7 +161,7 @@ function useCadGeometry(modelUrl: string) {
       disposed = true;
       controller.abort();
     };
-  }, [modelUrl]);
+  }, [source]);
 
   useEffect(
     () => () => {
@@ -502,6 +539,7 @@ function Section({
 function App() {
   const [cad, setCad] = useState(() => normalizeCadComponent(SAMPLE_CAD_COMPONENT));
   const [boardThickness, setBoardThickness] = useState(1.6);
+  const [localModelFile, setLocalModelFile] = useState<File | null>(null);
   const [importText, setImportText] = useState(() =>
     JSON.stringify(SAMPLE_CAD_COMPONENT, null, 2),
   );
@@ -509,13 +547,21 @@ function App() {
 
   const debouncedCad = useDebouncedValue(cad, 350);
   const debouncedBoardThickness = useDebouncedValue(boardThickness, 350);
+  const modelSource = useMemo<ModelSource>(() => {
+    if (localModelFile) {
+      return { kind: "file", file: localModelFile };
+    }
+    const modelUrl = debouncedCad.model_obj_url.trim();
+    if (modelUrl) {
+      return { kind: "url", value: modelUrl };
+    }
+    return { kind: "none" };
+  }, [debouncedCad.model_obj_url, localModelFile]);
   const fallbackGeometry = useMemo(
     () => buildFallbackGeometry(debouncedCad),
     [debouncedCad],
   );
-  const { geometry: fetchedGeometry, status, message } = useCadGeometry(
-    debouncedCad.model_obj_url,
-  );
+  const { geometry: fetchedGeometry, status, message } = useCadGeometry(modelSource);
   const geometry = fetchedGeometry ?? fallbackGeometry;
   const placement = useMemo(() => computePlacement(debouncedCad), [debouncedCad]);
   const geometryBounds = useMemo(() => getGeometryBounds(geometry), [geometry]);
@@ -565,6 +611,7 @@ function App() {
       return;
     }
     setCad(normalizeCadComponent(parsed.value));
+    setLocalModelFile(null);
     setImportError(null);
   };
 
@@ -674,8 +721,8 @@ function App() {
           <p className="eyebrow">Circuit JSON</p>
           <h1>`cad_component` visualizer</h1>
           <p className="lede">
-            Edit the placement fields directly, then inspect how the model-space
-            board normal maps into board-space z+.
+            Edit placement fields directly, then inspect OBJ or STEP geometry in
+            model space and board space.
           </p>
         </div>
 
@@ -727,15 +774,39 @@ function App() {
           />
         </Section>
 
-        <Section title="model_obj_url">
+        <Section title="model source">
           <label className="control-stack">
-            <span>model_obj_url</span>
+            <span>Model URL (.obj, .step, .stp)</span>
             <input
               type="text"
               value={cad.model_obj_url}
-              onChange={(event) => update("model_obj_url", event.target.value)}
+              onChange={(event) => {
+                setLocalModelFile(null);
+                update("model_obj_url", event.target.value);
+              }}
             />
           </label>
+          <label className="control-stack">
+            <span>Local model file (.obj, .step, .stp)</span>
+            <input
+              type="file"
+              accept=".obj,.step,.stp"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                setLocalModelFile(file);
+                if (file) {
+                  update("model_obj_url", "");
+                }
+              }}
+            />
+          </label>
+          {localModelFile ? (
+            <div className="actions">
+              <button type="button" onClick={() => setLocalModelFile(null)}>
+                Clear local file ({localModelFile.name})
+              </button>
+            </div>
+          ) : null}
         </Section>
 
         <details className="json-panel">
