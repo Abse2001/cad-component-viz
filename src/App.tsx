@@ -6,7 +6,6 @@ import {
   buildFallbackGeometry,
   computePlacement,
   detectModelFormat,
-  directionToVector,
   getGeometryBounds,
   normalizeCadComponent,
   parseModelFromBuffer,
@@ -455,6 +454,27 @@ function NumberField({
   );
 }
 
+function CheckboxField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className="checkbox-row">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 function Vector3Field({
   title,
   labels,
@@ -539,6 +559,7 @@ function Section({
 function App() {
   const [cad, setCad] = useState(() => normalizeCadComponent(SAMPLE_CAD_COMPONENT));
   const [boardThickness, setBoardThickness] = useState(1.6);
+  const [showBoard, setShowBoard] = useState(true);
   const [localModelFile, setLocalModelFile] = useState<File | null>(null);
   const [importText, setImportText] = useState(() =>
     JSON.stringify(SAMPLE_CAD_COMPONENT, null, 2),
@@ -565,10 +586,6 @@ function App() {
   const geometry = fetchedGeometry ?? fallbackGeometry;
   const placement = useMemo(() => computePlacement(debouncedCad), [debouncedCad]);
   const geometryBounds = useMemo(() => getGeometryBounds(geometry), [geometry]);
-  const modelUp = useMemo(
-    () => directionToVector(debouncedCad.model_board_normal_direction),
-    [debouncedCad.model_board_normal_direction],
-  );
   const generatedJson = useMemo(() => JSON.stringify(cad, null, 2), [cad]);
   const formatVec3 = (vector: THREE.Vector3) =>
     `(${vector.x.toFixed(2)}, ${vector.y.toFixed(2)}, ${vector.z.toFixed(2)})`;
@@ -615,52 +632,13 @@ function App() {
     setImportError(null);
   };
 
-  const modelScene = useMemo(
-    () => (scene: THREE.Scene) => {
-      addDefaultLights(scene);
-      scene.add(makeGrid(90, 36, debouncedCad.model_board_normal_direction));
-      scene.add(makeAxesToBadgePositions(geometryBounds.boundingBox));
-      scene.add(
-        new THREE.Mesh(
-          geometry.clone(),
-          new THREE.MeshPhongMaterial({
-            color: 0x79a8ff,
-            transparent: true,
-            opacity: 0.84,
-            side: THREE.DoubleSide,
-          }),
-        ),
-      );
-      scene.add(makeAxisBadges(geometryBounds.boundingBox));
-      const modelOriginMarker = makeHoverMarker(placement.modelOrigin, [
-        `Model Origin ${formatVec3(placement.modelOrigin)}`,
-        `Model Origin Alignment: ${debouncedCad.model_origin_alignment}`,
-      ]);
-      scene.add(
-        makeBoardNormalArrow(
-          placement.modelOrigin,
-          debouncedCad.model_board_normal_direction,
-        ),
-      );
-      return {
-        hoverTargets: [modelOriginMarker.target],
-        overlayObjects: [modelOriginMarker.group],
-      };
-    },
-    [
-      debouncedCad.model_board_normal_direction,
-      debouncedCad.model_origin_alignment,
-      geometry,
-      geometryBounds.boundingBox,
-      placement.modelOrigin,
-    ],
-  );
-
-  const boardScene = useMemo(
+  const viewerScene = useMemo(
     () => (scene: THREE.Scene) => {
       addDefaultLights(scene);
       scene.add(makeGrid(90, 36, "z+"));
-      scene.add(makeBoard(debouncedBoardThickness));
+      if (showBoard) {
+        scene.add(makeBoard(debouncedBoardThickness));
+      }
 
       const placed = new THREE.Group();
       placed.rotation.copy(placement.rotation);
@@ -669,7 +647,7 @@ function App() {
         new THREE.Mesh(
           geometry.clone(),
           new THREE.MeshPhongMaterial({
-            color: 0x7dd3a7,
+            color: 0x79a8ff,
             transparent: true,
             opacity: 0.84,
             side: THREE.DoubleSide,
@@ -687,27 +665,45 @@ function App() {
         `Cad Component Position ${formatVec3(boardPosition)}`,
         `Anchor Alignment: ${debouncedCad.anchor_alignment}`,
       ]);
+      const modelOriginWorld = placement.modelOrigin
+        .clone()
+        .applyEuler(placement.rotation)
+        .add(placement.translation);
+      const modelOriginMarker = makeHoverMarker(modelOriginWorld, [
+        `Model Origin ${formatVec3(modelOriginWorld)}`,
+        `Model Origin Alignment: ${debouncedCad.model_origin_alignment}`,
+      ]);
 
       const placedBounds = geometryBounds.boundingBox
         .clone()
         .applyMatrix4(placed.matrixWorld);
       scene.add(makeAxesToBadgePositions(placedBounds));
       scene.add(makeAxisBadges(placedBounds));
+      scene.add(
+        makeBoardNormalArrow(
+          modelOriginWorld,
+          debouncedCad.model_board_normal_direction,
+        ),
+      );
       return {
-        hoverTargets: [boardPositionMarker.target],
-        overlayObjects: [boardPositionMarker.group],
+        hoverTargets: [boardPositionMarker.target, modelOriginMarker.target],
+        overlayObjects: [boardPositionMarker.group, modelOriginMarker.group],
       };
     },
     [
       debouncedCad.anchor_alignment,
+      debouncedCad.model_board_normal_direction,
+      debouncedCad.model_origin_alignment,
       debouncedBoardThickness,
       debouncedCad.position.x,
       debouncedCad.position.y,
       debouncedCad.position.z,
       geometry,
       geometryBounds.boundingBox,
+      placement.modelOrigin,
       placement.rotation,
       placement.translation,
+      showBoard,
     ],
   );
 
@@ -722,7 +718,7 @@ function App() {
           <h1>`cad_component` visualizer</h1>
           <p className="lede">
             Edit placement fields directly, then inspect OBJ or STEP geometry in
-            model space and board space.
+            a single board-space viewer with the board overlay toggled on or off.
           </p>
         </div>
 
@@ -809,13 +805,18 @@ function App() {
           ) : null}
         </Section>
 
-        <details className="json-panel">
+        <details className="json-panel" open>
           <summary>board properties</summary>
           <div className="editor-grid details-grid">
             <NumberField
               label="board_thickness"
               value={boardThickness}
               onChange={setBoardThickness}
+            />
+            <CheckboxField
+              label="show_board"
+              checked={showBoard}
+              onChange={setShowBoard}
             />
           </div>
         </details>
@@ -855,18 +856,12 @@ function App() {
         </details>
       </aside>
 
-      <section className="viewports">
+      <section className="viewer-panel">
         <SceneCanvas
-          title="Model space"
-          subtitle={`${debouncedCad.model_board_normal_direction} is treated as board-up in the raw model.`}
-          up={modelUp}
-          buildScene={modelScene}
-        />
-        <SceneCanvas
-          title="Board space"
-          subtitle="The component is rotated into z+ and translated onto the board."
+          title="Viewer"
+          subtitle="The model is shown in board space. Toggle the green board overlay on or off."
           up={new THREE.Vector3(0, 0, 1)}
-          buildScene={boardScene}
+          buildScene={viewerScene}
         />
       </section>
     </main>

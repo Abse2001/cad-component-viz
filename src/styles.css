@@ -107,6 +107,20 @@ select {
   font-size: 11px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #374151;
+  font-size: 10px;
+}
+
+.checkbox-row input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
 .editor-card {
   padding: 8px;
   background: #ffffff;
@@ -262,13 +276,10 @@ select {
   min-height: 10rem;
 }
 
-.viewports {
+.viewer-panel {
   height: 100vh;
   min-width: 0;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-  gap: 1px;
-  background: #d1d5db;
+  background: #ffffff;
 }
 
 .viewport {
@@ -354,8 +365,8 @@ select {
     max-height: none;
   }
 
-  .viewports {
+  .viewer-panel {
     height: auto;
-    grid-template-rows: minmax(20rem, 45vh) minmax(20rem, 45vh);
+    min-height: 20rem;
   }
 }
