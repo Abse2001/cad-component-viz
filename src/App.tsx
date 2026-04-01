@@ -10,6 +10,7 @@ import {
   normalizeCadComponent,
   parseModelFromBuffer,
   parseModelFromUnknownBuffer,
+  parseModelFromUrl,
 } from "./lib/cad";
 import {
   addDefaultLights,
@@ -110,24 +111,34 @@ function useCadGeometry(source: ModelSource) {
     });
 
     const controller = new AbortController();
-    const readSource = async () => {
-      if (source.kind === "file") {
-        return source.file.arrayBuffer();
+    const loadGeometry = async () => {
+      if (source.kind === "url" && format) {
+        return {
+          geometry: await parseModelFromUrl(source.value, format),
+          format,
+        };
       }
-      const response = await fetch(source.value, { signal: controller.signal });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch model (${response.status})`);
+
+      const buffer =
+        source.kind === "file"
+          ? await source.file.arrayBuffer()
+          : await fetch(source.value, { signal: controller.signal }).then(
+            async (response) => {
+              if (!response.ok) {
+                throw new Error(`Failed to fetch model (${response.status})`);
+              }
+              return response.arrayBuffer();
+            },
+          );
+
+      if (format) {
+        return { geometry: await parseModelFromBuffer(buffer, format), format };
       }
-      return response.arrayBuffer();
+
+      return parseModelFromUnknownBuffer(buffer);
     };
 
-    readSource()
-      .then(async (buffer) => {
-        if (format) {
-          return { geometry: await parseModelFromBuffer(buffer, format), format };
-        }
-        return parseModelFromUnknownBuffer(buffer);
-      })
+    loadGeometry()
       .then(({ geometry, format: resolvedFormat }) => {
         if (disposed) {
           geometry.dispose();
@@ -493,22 +504,22 @@ function Vector3Field({
     <div className="vector3-block">
       <div className="vector3-title">{title}</div>
       <div className="vector3-field">
-      {labels.map((label) => (
-        <span key={label} className="vector3-label">
-          {label}
-        </span>
-      ))}
-      {values.map((value, index) => (
-        <input
-          key={axes[index] ?? index}
-          type="number"
-          value={value}
-          step={step}
-          onChange={(event) =>
-            onChange(axes[index] ?? "x", Number(event.target.value))
-          }
-        />
-      ))}
+        {labels.map((label) => (
+          <span key={label} className="vector3-label">
+            {label}
+          </span>
+        ))}
+        {values.map((value, index) => (
+          <input
+            key={axes[index] ?? index}
+            type="number"
+            value={value}
+            step={step}
+            onChange={(event) =>
+              onChange(axes[index] ?? "x", Number(event.target.value))
+            }
+          />
+        ))}
       </div>
     </div>
   );
@@ -677,8 +688,8 @@ function App() {
       const placedBounds = geometryBounds.boundingBox
         .clone()
         .applyMatrix4(placed.matrixWorld);
-      scene.add(makeAxesToBadgePositions(placedBounds));
-      scene.add(makeAxisBadges(placedBounds));
+      scene.add(makeAxesToBadgePositions(placedBounds, placement.rotation));
+      scene.add(makeAxisBadges(placedBounds, placement.rotation));
       scene.add(
         makeBoardNormalArrow(
           modelOriginWorld,
@@ -717,7 +728,7 @@ function App() {
           <p className="eyebrow">Circuit JSON</p>
           <h1>`cad_component` visualizer</h1>
           <p className="lede">
-            Edit placement fields directly, then inspect OBJ or STEP geometry in
+            Edit placement fields directly, then inspect OBJ,STEP or gltf geometry in
             a single board-space viewer with the board overlay toggled on or off.
           </p>
         </div>
@@ -772,7 +783,7 @@ function App() {
 
         <Section title="model source">
           <label className="control-stack">
-            <span>Model URL (.obj, .step, .stp)</span>
+            <span>Model URL (.obj, .step, .stp, .gltf, .glb)</span>
             <input
               type="text"
               value={cad.model_obj_url}
@@ -783,10 +794,10 @@ function App() {
             />
           </label>
           <label className="control-stack">
-            <span>Local model file (.obj, .step, .stp)</span>
+            <span>Local model file (.obj, .step, .stp, .gltf, .glb)</span>
             <input
               type="file"
-              accept=".obj,.step,.stp"
+              accept=".obj,.step,.stp,.gltf,.glb"
               onChange={(event) => {
                 const file = event.target.files?.[0] ?? null;
                 setLocalModelFile(file);

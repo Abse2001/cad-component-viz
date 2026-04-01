@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { OcctModule } from "./occt";
 import type { Alignment, AxisDirection, CadComponentInput } from "../types";
@@ -138,7 +139,7 @@ function hasSTEPHeader(content: ArrayBuffer): boolean {
 	return text.includes("ISO-10303-21") || text.includes("FILE_SCHEMA");
 }
 
-export type ModelFormat = "obj" | "step";
+export type ModelFormat = "obj" | "step" | "gltf" | "glb";
 
 let occtModulePromise: Promise<OcctModule> | null = null;
 
@@ -169,6 +170,12 @@ export function detectModelFormat(nameOrUrl: string): ModelFormat | null {
 	if (extension === "step" || extension === "stp") {
 		return "step";
 	}
+	if (extension === "gltf") {
+		return "gltf";
+	}
+	if (extension === "glb") {
+		return "glb";
+	}
 	return null;
 }
 
@@ -192,12 +199,22 @@ export async function parseModelFromBuffer(
 	if (format === "step") {
 		return parseSTEP(content);
 	}
+	if (format === "gltf" || format === "glb") {
+		return parseGLTFContent(content, format);
+	}
 	throw new Error("Unsupported model format.");
 }
 
 export async function parseModelFromUnknownBuffer(
 	content: ArrayBuffer,
 ): Promise<{ geometry: THREE.BufferGeometry; format: ModelFormat }> {
+	if (hasGLBHeader(content)) {
+		return {
+			geometry: await parseGLTFContent(content, "glb"),
+			format: "glb",
+		};
+	}
+
 	if (hasSTEPHeader(content)) {
 		return {
 			geometry: await parseSTEP(content),
@@ -206,6 +223,13 @@ export async function parseModelFromUnknownBuffer(
 	}
 
 	const text = new TextDecoder().decode(content);
+	if (looksLikeGLTFJson(text)) {
+		return {
+			geometry: await parseGLTFContent(content, "gltf"),
+			format: "gltf",
+		};
+	}
+
 	const geometry = parseOBJ(text);
 	const positionAttribute = geometry.getAttribute("position");
 	if (positionAttribute && positionAttribute.count > 0) {
@@ -217,7 +241,25 @@ export async function parseModelFromUnknownBuffer(
 
 	geometry.dispose();
 
-	throw new Error("Could not detect model format. Use .obj, .step, or .stp.");
+	throw new Error("Could not detect model format. Use .obj, .step, .stp, .gltf, or .glb.");
+}
+
+export async function parseModelFromUrl(
+	url: string,
+	format: ModelFormat,
+): Promise<THREE.BufferGeometry> {
+	if (format === "gltf" || format === "glb") {
+		const loader = new GLTFLoader();
+		const gltf = await loader.loadAsync(url);
+		return extractGeometryFromObject3D(gltf.scene);
+	}
+
+	const response = await fetch(url);
+	if (!response.ok) {
+		throw new Error(`Failed to fetch model (${response.status})`);
+	}
+
+	return parseModelFromBuffer(await response.arrayBuffer(), format);
 }
 
 export async function parseSTEP(content: ArrayBuffer): Promise<THREE.BufferGeometry> {
@@ -271,6 +313,88 @@ async function loadOcctModule(): Promise<OcctModule> {
 		occtModulePromise = import("./occt").then(({ getOcctModule }) => getOcctModule());
 	}
 	return occtModulePromise;
+}
+
+function hasGLBHeader(content: ArrayBuffer): boolean {
+	if (content.byteLength < 4) {
+		return false;
+	}
+	const header = new Uint8Array(content, 0, 4);
+	return (
+		header[0] === 0x67 &&
+		header[1] === 0x6c &&
+		header[2] === 0x54 &&
+		header[3] === 0x46
+	);
+}
+
+function looksLikeGLTFJson(content: string): boolean {
+	try {
+		const parsed = JSON.parse(content) as {
+			asset?: { version?: unknown };
+			scenes?: unknown;
+			nodes?: unknown;
+			meshes?: unknown;
+		};
+		return (
+			typeof parsed.asset?.version === "string" &&
+			(Array.isArray(parsed.scenes) ||
+				Array.isArray(parsed.nodes) ||
+				Array.isArray(parsed.meshes))
+		);
+	} catch {
+		return false;
+	}
+}
+
+async function parseGLTFContent(
+	content: ArrayBuffer,
+	format: Extract<ModelFormat, "gltf" | "glb">,
+): Promise<THREE.BufferGeometry> {
+	const loader = new GLTFLoader();
+	const data = format === "gltf" ? new TextDecoder().decode(content) : content;
+	const gltf = await loader.parseAsync(data, "");
+	return extractGeometryFromObject3D(gltf.scene);
+}
+
+function extractGeometryFromObject3D(object: THREE.Object3D): THREE.BufferGeometry {
+	object.updateMatrixWorld(true);
+
+	const geometries: THREE.BufferGeometry[] = [];
+	object.traverse((child) => {
+		if (!(child instanceof THREE.Mesh) || !child.geometry) {
+			return;
+		}
+
+		const geometry = child.geometry.clone();
+		geometry.applyMatrix4(child.matrixWorld);
+		if (!geometry.getAttribute("normal")) {
+			geometry.computeVertexNormals();
+		}
+		geometries.push(geometry);
+	});
+
+	if (geometries.length === 0) {
+		throw new Error("glTF import did not contain any mesh geometry.");
+	}
+
+	const mergedGeometry =
+		geometries.length === 1
+			? geometries[0]
+			: mergeGeometries(geometries, false);
+
+	for (const geometry of geometries) {
+		if (geometry !== mergedGeometry) {
+			geometry.dispose();
+		}
+	}
+
+	if (!mergedGeometry) {
+		throw new Error("glTF import returned incompatible mesh data.");
+	}
+
+	mergedGeometry.computeBoundingBox();
+	return mergedGeometry;
 }
 
 export function computePlacement(input: Required<CadComponentInput>) {

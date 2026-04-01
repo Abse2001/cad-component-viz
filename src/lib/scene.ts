@@ -15,6 +15,8 @@ interface AxisBadgeSpec {
 	position: THREE.Vector3;
 }
 
+type AxisTransform = THREE.Euler | THREE.Quaternion | THREE.Matrix4;
+
 export function createRenderer(canvas: HTMLCanvasElement) {
 	const renderer = new THREE.WebGLRenderer({
 		antialias: true,
@@ -141,48 +143,82 @@ function makeBadgeTexture(text: string, fillStyle: string) {
 	return texture;
 }
 
-export function getAxisBadgeSpecs(bounds: THREE.Box3): AxisBadgeSpec[] {
+function applyAxisTransform(
+	direction: THREE.Vector3,
+	transform?: AxisTransform,
+) {
+	if (!transform) {
+		return direction;
+	}
+	if (transform instanceof THREE.Euler) {
+		return direction.applyEuler(transform);
+	}
+	if (transform instanceof THREE.Quaternion) {
+		return direction.applyQuaternion(transform);
+	}
+	return direction.applyMatrix4(transform).normalize();
+}
+
+export function getAxisBadgeSpecs(
+	bounds: THREE.Box3,
+	transform?: AxisTransform,
+): AxisBadgeSpec[] {
 	const size = bounds.getSize(new THREE.Vector3());
 	const maxDimension = Math.max(size.x, size.y, size.z, 1);
 	const offset = maxDimension * 1.1;
 
-	return [
+	const axisSpecs: Array<{
+		text: string;
+		fill: string;
+		direction: THREE.Vector3;
+	}> = [
 		{
 			text: "x+",
 			fill: "#b91c1c",
-			position: new THREE.Vector3(offset, 0, 0),
+			direction: new THREE.Vector3(1, 0, 0),
 		},
 		{
 			text: "x-",
 			fill: "#b91c1c",
-			position: new THREE.Vector3(-offset, 0, 0),
+			direction: new THREE.Vector3(-1, 0, 0),
 		},
 		{
 			text: "y+",
 			fill: "#15803d",
-			position: new THREE.Vector3(0, offset, 0),
+			direction: new THREE.Vector3(0, 1, 0),
 		},
 		{
 			text: "y-",
 			fill: "#15803d",
-			position: new THREE.Vector3(0, -offset, 0),
+			direction: new THREE.Vector3(0, -1, 0),
 		},
 		{
 			text: "z+",
 			fill: "#1d4ed8",
-			position: new THREE.Vector3(0, 0, offset),
+			direction: new THREE.Vector3(0, 0, 1),
 		},
 		{
 			text: "z-",
 			fill: "#1d4ed8",
-			position: new THREE.Vector3(0, 0, -offset),
+			direction: new THREE.Vector3(0, 0, -1),
 		},
 	];
+
+	return axisSpecs.map((spec) => ({
+		text: spec.text,
+		fill: spec.fill,
+		position: applyAxisTransform(spec.direction.clone(), transform).multiplyScalar(
+			offset,
+		),
+	}));
 }
 
-export function makeAxesToBadgePositions(bounds: THREE.Box3) {
+export function makeAxesToBadgePositions(
+	bounds: THREE.Box3,
+	transform?: AxisTransform,
+) {
 	const group = new THREE.Group();
-	const labels = getAxisBadgeSpecs(bounds);
+	const labels = getAxisBadgeSpecs(bounds, transform);
 	const axisColors: Record<string, number> = {
 		x: 0xff5d73,
 		y: 0x5dff97,
@@ -205,8 +241,8 @@ export function makeAxesToBadgePositions(bounds: THREE.Box3) {
 	return group;
 }
 
-export function makeAxisBadges(bounds: THREE.Box3) {
-	const labels = getAxisBadgeSpecs(bounds);
+export function makeAxisBadges(bounds: THREE.Box3, transform?: AxisTransform) {
+	const labels = getAxisBadgeSpecs(bounds, transform);
 	const group = new THREE.Group();
 	for (const label of labels) {
 		const sprite = new THREE.Sprite(

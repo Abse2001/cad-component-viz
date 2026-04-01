@@ -6,8 +6,13 @@ This is most useful when trying to debug the correct loading of models into tsci
 
 Supported model sources:
 
-- Remote or local HTTP URLs for `.obj`, `.step`, and `.stp`
-- Local file upload from the browser for `.obj`, `.step`, and `.stp`
+- Remote or local HTTP URLs for `.obj`, `.step`, `.stp`, `.gltf`, and `.glb`
+- Local file upload from the browser for `.obj`, `.step`, `.stp`, `.gltf`, and `.glb`
+
+Notes for glTF:
+
+- Remote `.gltf` URLs can reference sibling `.bin` files and textures normally
+- Local `.gltf` uploads need to be self-contained; multi-file local glTF packages are not resolved from the browser file picker
 
 ## Run locally
 
