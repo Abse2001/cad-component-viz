@@ -34,6 +34,8 @@ type ModelSource =
   | { kind: "url"; value: string }
   | { kind: "file"; file: File };
 
+type AppMode = "landing" | "workspace";
+
 function parseInput(text: string): {
   value: CadComponentInput | null;
   error: string | null;
@@ -567,15 +569,34 @@ function Section({
   );
 }
 
+function createUploadedCadComponent(file: File): Required<CadComponentInput> {
+  const lowerName = file.name.toLowerCase();
+  const modelBoardNormalDirection: AxisDirection =
+    lowerName.endsWith(".glb") || lowerName.endsWith(".gltf") ? "y+" : "z+";
+
+  return normalizeCadComponent({
+    name: file.name.replace(/\.[^.]+$/, "") || file.name,
+    description: `Uploaded model from ${file.name}`,
+    model_obj_url: "",
+    model_origin_position: { x: 0, y: 0, z: 0 },
+    model_origin_alignment: "center_of_component_board_surface",
+    model_board_normal_direction: modelBoardNormalDirection,
+  });
+}
+
 function App() {
+  const [mode, setMode] = useState<AppMode>("landing");
   const [cad, setCad] = useState(() => normalizeCadComponent(SAMPLE_CAD_COMPONENT));
   const [boardThickness, setBoardThickness] = useState(1.6);
   const [showBoard, setShowBoard] = useState(true);
   const [localModelFile, setLocalModelFile] = useState<File | null>(null);
+  const [isDragActive, setIsDragActive] = useState(false);
   const [importText, setImportText] = useState(() =>
     JSON.stringify(SAMPLE_CAD_COMPONENT, null, 2),
   );
   const [importError, setImportError] = useState<string | null>(null);
+  const landingFileInputRef = useRef<HTMLInputElement | null>(null);
+  const dragDepthRef = useRef(0);
 
   const debouncedCad = useDebouncedValue(cad, 350);
   const debouncedBoardThickness = useDebouncedValue(boardThickness, 350);
@@ -632,6 +653,60 @@ function App() {
     }));
   };
 
+  const applyCadState = (
+    nextCad: Required<CadComponentInput>,
+    nextFile: File | null,
+  ) => {
+    setCad(nextCad);
+    setLocalModelFile(nextFile);
+    setImportText(JSON.stringify(nextCad, null, 2));
+    setImportError(null);
+    setMode("workspace");
+  };
+
+  const loadDemoModel = () => {
+    applyCadState(normalizeCadComponent(SAMPLE_CAD_COMPONENT), null);
+  };
+
+  const loadDroppedModel = (file: File) => {
+    applyCadState(createUploadedCadComponent(file), file);
+  };
+
+  const setDragInactive = () => {
+    dragDepthRef.current = 0;
+    setIsDragActive(false);
+  };
+
+  const handleDragEnter = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragActive(true);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    if (!isDragActive) {
+      setIsDragActive(true);
+    }
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragActive(false);
+    }
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    setDragInactive();
+    if (file) {
+      loadDroppedModel(file);
+    }
+  };
+
   const importJson = () => {
     const parsed = parseInput(importText);
     if (!parsed.value) {
@@ -641,6 +716,7 @@ function App() {
     setCad(normalizeCadComponent(parsed.value));
     setLocalModelFile(null);
     setImportError(null);
+    setMode("workspace");
   };
 
   const viewerScene = useMemo(
@@ -721,8 +797,70 @@ function App() {
   const statusClass =
     status === "ready" ? "ok" : status === "loading" ? "loading" : "warning";
 
+  if (mode === "landing") {
+    return (
+      <main className="landing-shell">
+        <section className="landing-card">
+          <h1>Load a CAD model</h1>
+          <p className="landing-lede">
+            Drop a model file to open it in the viewer, or load the demo model.
+          </p>
+          <div
+            className={`dropzone ${isDragActive ? "active" : ""}`}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <div className="dropzone-copy">
+              <strong>Drag and drop a model</strong>
+              <span>Supports OBJ, STEP, STP, GLTF, and GLB.</span>
+            </div>
+            <div className="landing-actions">
+              <button
+                type="button"
+                onClick={() => landingFileInputRef.current?.click()}
+              >
+                Choose model
+              </button>
+              <button type="button" className="secondary" onClick={loadDemoModel}>
+                Load demo
+              </button>
+            </div>
+            <input
+              ref={landingFileInputRef}
+              className="sr-only-input"
+              type="file"
+              accept=".obj,.step,.stp,.gltf,.glb"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                if (file) {
+                  loadDroppedModel(file);
+                }
+                event.target.value = "";
+              }}
+            />
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
-    <main className="app-shell">
+    <main
+      className="app-shell"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragActive ? (
+        <div className="workspace-drop-overlay">
+          <div className="workspace-drop-card">
+            <strong>Drop to replace the current model</strong>
+          </div>
+        </div>
+      ) : null}
       <aside className="sidebar">
         <div className="hero">
           <p className="eyebrow">Circuit JSON</p>
@@ -731,6 +869,12 @@ function App() {
             Edit placement fields directly, then inspect OBJ,STEP or gltf geometry in
             a single board-space viewer with the board overlay toggled on or off.
           </p>
+        </div>
+
+        <div className="actions">
+          <button type="button" onClick={() => setMode("landing")}>
+            Load another model
+          </button>
         </div>
 
         <div className={`status-pill ${statusClass}`}>{message}</div>
