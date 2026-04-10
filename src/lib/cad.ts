@@ -140,6 +140,10 @@ function hasSTEPHeader(content: ArrayBuffer): boolean {
 }
 
 export type ModelFormat = "obj" | "step" | "gltf" | "glb"
+export type LoadedModel = {
+  geometry: THREE.BufferGeometry
+  object: THREE.Object3D
+}
 
 let occtModulePromise: Promise<OcctModule> | null = null
 
@@ -194,9 +198,13 @@ export async function parseModelFromText(
 export async function parseModelFromBuffer(
   content: ArrayBuffer,
   format: ModelFormat,
-): Promise<THREE.BufferGeometry> {
+): Promise<LoadedModel> {
   if (format === "obj") {
-    return parseOBJ(new TextDecoder().decode(content))
+    const geometry = parseOBJ(new TextDecoder().decode(content))
+    return {
+      geometry,
+      object: new THREE.Mesh(geometry.clone(), createDefaultModelMaterial()),
+    }
   }
   if (format === "step") {
     return parseSTEP(content)
@@ -209,17 +217,17 @@ export async function parseModelFromBuffer(
 
 export async function parseModelFromUnknownBuffer(
   content: ArrayBuffer,
-): Promise<{ geometry: THREE.BufferGeometry; format: ModelFormat }> {
+): Promise<{ model: LoadedModel; format: ModelFormat }> {
   if (hasGLBHeader(content)) {
     return {
-      geometry: await parseGLTFContent(content, "glb"),
+      model: await parseGLTFContent(content, "glb"),
       format: "glb",
     }
   }
 
   if (hasSTEPHeader(content)) {
     return {
-      geometry: await parseSTEP(content),
+      model: await parseSTEP(content),
       format: "step",
     }
   }
@@ -227,7 +235,7 @@ export async function parseModelFromUnknownBuffer(
   const text = new TextDecoder().decode(content)
   if (looksLikeGLTFJson(text)) {
     return {
-      geometry: await parseGLTFContent(content, "gltf"),
+      model: await parseGLTFContent(content, "gltf"),
       format: "gltf",
     }
   }
@@ -236,7 +244,10 @@ export async function parseModelFromUnknownBuffer(
   const positionAttribute = geometry.getAttribute("position")
   if (positionAttribute && positionAttribute.count > 0) {
     return {
-      geometry,
+      model: {
+        geometry,
+        object: new THREE.Mesh(geometry.clone(), createDefaultModelMaterial()),
+      },
       format: "obj",
     }
   }
@@ -251,11 +262,22 @@ export async function parseModelFromUnknownBuffer(
 export async function parseModelFromUrl(
   url: string,
   format: ModelFormat,
-): Promise<THREE.BufferGeometry> {
+): Promise<LoadedModel> {
+  if (format === "obj") {
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`Failed to fetch model (${response.status})`)
+    }
+    return parseModelFromBuffer(await response.arrayBuffer(), format)
+  }
+
   if (format === "gltf" || format === "glb") {
     const loader = new GLTFLoader()
     const gltf = await loader.loadAsync(url)
-    return extractGeometryFromObject3D(gltf.scene)
+    return {
+      geometry: extractGeometryFromObject3D(gltf.scene),
+      object: gltf.scene,
+    }
   }
 
   const response = await fetch(url)
@@ -266,9 +288,91 @@ export async function parseModelFromUrl(
   return parseModelFromBuffer(await response.arrayBuffer(), format)
 }
 
-export async function parseSTEP(
-  content: ArrayBuffer,
-): Promise<THREE.BufferGeometry> {
+function createDefaultModelMaterial(
+  color: THREE.ColorRepresentation = 0xffffff,
+): THREE.MeshPhongMaterial {
+  return new THREE.MeshPhongMaterial({
+    color,
+    side: THREE.DoubleSide,
+  })
+}
+
+function createStepMeshMaterial(
+  color: [number, number, number] | null | undefined,
+  fallbackColor?: THREE.Color,
+): THREE.MeshPhongMaterial {
+  return createDefaultModelMaterial(
+    color
+      ? new THREE.Color(color[0], color[1], color[2])
+      : (fallbackColor ?? 0xffffff),
+  )
+}
+
+function buildStepMeshObject(
+  mesh: Awaited<ReturnType<OcctModule["ReadStepFile"]>>["meshes"][number],
+): THREE.Mesh {
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(mesh.attributes.position.array, 3),
+  )
+  geometry.setIndex(mesh.index.array)
+  if (mesh.attributes.normal) {
+    geometry.setAttribute(
+      "normal",
+      new THREE.Float32BufferAttribute(mesh.attributes.normal.array, 3),
+    )
+  } else {
+    geometry.computeVertexNormals()
+  }
+
+  const baseColor = mesh.color
+    ? new THREE.Color(mesh.color[0], mesh.color[1], mesh.color[2])
+    : new THREE.Color(0xffffff)
+  const materials: THREE.MeshPhongMaterial[] = [
+    createStepMeshMaterial(mesh.color, baseColor),
+  ]
+  const faces = mesh.brep_faces ?? []
+  if (faces.length > 0) {
+    geometry.clearGroups()
+    let triangleIndex = 0
+    let faceIndex = 0
+    const triangleCount = mesh.index.array.length / 3
+    while (triangleIndex < triangleCount) {
+      let lastTriangle = triangleCount
+      let materialIndex = 0
+      if (faceIndex < faces.length) {
+        const face = faces[faceIndex]
+        if (face && triangleIndex < face.first) {
+          lastTriangle = Math.min(face.first, triangleCount)
+        } else if (face) {
+          lastTriangle = Math.min(face.last + 1, triangleCount)
+          materialIndex =
+            materials.push(createStepMeshMaterial(face.color, baseColor)) - 1
+          faceIndex += 1
+        }
+      }
+      if (lastTriangle <= triangleIndex) {
+        break
+      }
+      geometry.addGroup(
+        triangleIndex * 3,
+        (lastTriangle - triangleIndex) * 3,
+        materialIndex,
+      )
+      triangleIndex = lastTriangle
+    }
+  }
+
+  const stepMesh = new THREE.Mesh(
+    geometry,
+    materials.length > 1 ? materials : materials[0],
+  )
+  stepMesh.name = mesh.name
+  return stepMesh
+}
+
+export async function parseSTEP(content: ArrayBuffer): Promise<LoadedModel> {
   const module = await loadOcctModule()
   const result = module.ReadStepFile(new Uint8Array(content), {
     linearUnit: "millimeter",
@@ -281,23 +385,13 @@ export async function parseSTEP(
     throw new Error("STEP import failed.")
   }
 
-  const geometries = result.meshes.map((mesh) => {
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute(mesh.attributes.position.array, 3),
-    )
-    geometry.setIndex(mesh.index.array)
-    if (mesh.attributes.normal) {
-      geometry.setAttribute(
-        "normal",
-        new THREE.Float32BufferAttribute(mesh.attributes.normal.array, 3),
-      )
-    } else {
-      geometry.computeVertexNormals()
-    }
-    return geometry
-  })
+  const group = new THREE.Group()
+  const geometries: THREE.BufferGeometry[] = []
+  for (const mesh of result.meshes) {
+    const stepMesh = buildStepMeshObject(mesh)
+    group.add(stepMesh)
+    geometries.push(stepMesh.geometry.clone())
+  }
 
   const mergedGeometry = mergeGeometries(geometries, false)
   for (const geometry of geometries) {
@@ -311,7 +405,10 @@ export async function parseSTEP(
   }
 
   mergedGeometry.computeBoundingBox()
-  return mergedGeometry
+  return {
+    geometry: mergedGeometry,
+    object: group,
+  }
 }
 
 async function loadOcctModule(): Promise<OcctModule> {
@@ -358,11 +455,14 @@ function looksLikeGLTFJson(content: string): boolean {
 async function parseGLTFContent(
   content: ArrayBuffer,
   format: Extract<ModelFormat, "gltf" | "glb">,
-): Promise<THREE.BufferGeometry> {
+): Promise<LoadedModel> {
   const loader = new GLTFLoader()
   const data = format === "gltf" ? new TextDecoder().decode(content) : content
   const gltf = await loader.parseAsync(data, "")
-  return extractGeometryFromObject3D(gltf.scene)
+  return {
+    geometry: extractGeometryFromObject3D(gltf.scene),
+    object: gltf.scene,
+  }
 }
 
 function extractGeometryFromObject3D(
@@ -439,4 +539,71 @@ export function getGeometryBounds(geometry: THREE.BufferGeometry) {
     size,
     center,
   }
+}
+
+export function cloneModelObject(object: THREE.Object3D): THREE.Object3D {
+  const sourceMeshes: THREE.Mesh[] = []
+  const cloneMeshes: THREE.Mesh[] = []
+  const clone = object.clone(true)
+
+  object.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      sourceMeshes.push(child)
+    }
+  })
+  clone.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      cloneMeshes.push(child)
+    }
+  })
+
+  for (let index = 0; index < sourceMeshes.length; index += 1) {
+    const sourceMesh = sourceMeshes[index]
+    const cloneMesh = cloneMeshes[index]
+    if (!sourceMesh || !cloneMesh) {
+      continue
+    }
+
+    cloneMesh.geometry = sourceMesh.geometry.clone()
+    cloneMesh.material = Array.isArray(sourceMesh.material)
+      ? sourceMesh.material.map((material) => material.clone())
+      : sourceMesh.material.clone()
+  }
+
+  return clone
+}
+
+function disposeMaterialResources(material: THREE.Material) {
+  const textures = new Set<THREE.Texture>()
+  for (const value of Object.values(material)) {
+    if (value instanceof THREE.Texture) {
+      textures.add(value)
+    }
+  }
+
+  material.dispose()
+  for (const texture of textures) {
+    texture.dispose()
+  }
+}
+
+export function disposeModelObject(object: THREE.Object3D | null) {
+  if (!object) {
+    return
+  }
+
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return
+    }
+
+    child.geometry.dispose()
+    if (Array.isArray(child.material)) {
+      for (const material of child.material) {
+        disposeMaterialResources(material)
+      }
+    } else {
+      disposeMaterialResources(child.material)
+    }
+  })
 }

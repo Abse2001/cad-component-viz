@@ -4,8 +4,10 @@ import {
   ALIGNMENT_OPTIONS,
   NORMAL_OPTIONS,
   buildFallbackGeometry,
+  cloneModelObject,
   computePlacement,
   detectModelFormat,
+  disposeModelObject,
   getGeometryBounds,
   normalizeCadComponent,
   parseModelFromBuffer,
@@ -80,11 +82,11 @@ function getIdleMessage(source: ModelSource): string {
 
 function useCadGeometry(source: ModelSource) {
   const [state, setState] = useState<{
-    geometry: THREE.BufferGeometry | null
+    model: Awaited<ReturnType<typeof parseModelFromBuffer>> | null
     status: "idle" | "loading" | "ready" | "fallback"
     message: string
   }>({
-    geometry: null,
+    model: null,
     status: source.kind === "none" ? "fallback" : "loading",
     message: getIdleMessage(source),
   })
@@ -94,7 +96,7 @@ function useCadGeometry(source: ModelSource) {
 
     if (source.kind === "none") {
       setState({
-        geometry: null,
+        model: null,
         status: "fallback",
         message: "Using fallback box from size.",
       })
@@ -105,7 +107,7 @@ function useCadGeometry(source: ModelSource) {
     const format = detectModelFormat(sourceName)
 
     setState({
-      geometry: null,
+      model: null,
       status: "loading",
       message: format
         ? `Loading ${format.toUpperCase()} model...`
@@ -116,7 +118,7 @@ function useCadGeometry(source: ModelSource) {
     const loadGeometry = async () => {
       if (source.kind === "url" && format) {
         return {
-          geometry: await parseModelFromUrl(source.value, format),
+          model: await parseModelFromUrl(source.value, format),
           format,
         }
       }
@@ -134,20 +136,21 @@ function useCadGeometry(source: ModelSource) {
             )
 
       if (format) {
-        return { geometry: await parseModelFromBuffer(buffer, format), format }
+        return { model: await parseModelFromBuffer(buffer, format), format }
       }
 
       return parseModelFromUnknownBuffer(buffer)
     }
 
     loadGeometry()
-      .then(({ geometry, format: resolvedFormat }) => {
+      .then(({ model, format: resolvedFormat }) => {
         if (disposed) {
-          geometry.dispose()
+          model.geometry.dispose()
+          disposeModelObject(model.object)
           return
         }
         setState({
-          geometry,
+          model,
           status: "ready",
           message:
             source.kind === "file"
@@ -160,7 +163,7 @@ function useCadGeometry(source: ModelSource) {
           return
         }
         setState({
-          geometry: null,
+          model: null,
           status: "fallback",
           message:
             error instanceof Error
@@ -177,9 +180,10 @@ function useCadGeometry(source: ModelSource) {
 
   useEffect(
     () => () => {
-      state.geometry?.dispose()
+      state.model?.geometry.dispose()
+      disposeModelObject(state.model?.object ?? null)
     },
-    [state.geometry],
+    [state.model],
   )
 
   return state
@@ -623,12 +627,8 @@ function App() {
     () => buildFallbackGeometry(debouncedCad),
     [debouncedCad],
   )
-  const {
-    geometry: fetchedGeometry,
-    status,
-    message,
-  } = useCadGeometry(modelSource)
-  const geometry = fetchedGeometry ?? fallbackGeometry
+  const { model: loadedModel, status, message } = useCadGeometry(modelSource)
+  const geometry = loadedModel?.geometry ?? fallbackGeometry
   const placement = useMemo(
     () => computePlacement(debouncedCad),
     [debouncedCad],
@@ -746,17 +746,21 @@ function App() {
       const placed = new THREE.Group()
       placed.rotation.copy(placement.rotation)
       placed.position.copy(placement.translation)
-      placed.add(
-        new THREE.Mesh(
-          geometry.clone(),
-          new THREE.MeshPhongMaterial({
-            color: 0x79a8ff,
-            transparent: true,
-            opacity: 0.84,
-            side: THREE.DoubleSide,
-          }),
-        ),
-      )
+      if (loadedModel) {
+        placed.add(cloneModelObject(loadedModel.object))
+      } else {
+        placed.add(
+          new THREE.Mesh(
+            geometry.clone(),
+            new THREE.MeshPhongMaterial({
+              color: 0x79a8ff,
+              transparent: true,
+              opacity: 0.84,
+              side: THREE.DoubleSide,
+            }),
+          ),
+        )
+      }
       scene.add(placed)
       placed.updateMatrixWorld(true)
       const boardPosition = new THREE.Vector3(
@@ -803,6 +807,7 @@ function App() {
       debouncedCad.position.z,
       geometry,
       geometryBounds.boundingBox,
+      loadedModel,
       placement.modelOrigin,
       placement.rotation,
       placement.translation,

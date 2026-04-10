@@ -9,6 +9,12 @@ export type OcctModule = {
     success: boolean
     meshes: Array<{
       name: string
+      color?: [number, number, number]
+      brep_faces?: Array<{
+        first: number
+        last: number
+        color: [number, number, number] | null
+      }>
       attributes: {
         position: {
           array: number[]

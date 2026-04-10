@@ -6,6 +6,7 @@
 		"start": "bunx --bun vite",
 		"build": "tsc -b && bunx --bun vite build",
 		"format": "biome format --write .",
+		"format:check": "biome format .",
 		"preview": "bunx --bun vite preview"
 	},
 	"dependencies": {
