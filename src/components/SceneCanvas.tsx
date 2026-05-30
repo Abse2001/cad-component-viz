@@ -9,7 +9,13 @@ import {
 } from "../lib/scene"
 
 type ProjectionMode = "perspective" | "orthographic"
-type ViewPreset = "side" | "front" | "top" | "corner"
+type AxisViewPreset = "x+" | "x-" | "y+" | "y-" | "z+" | "z-"
+type ViewPreset = AxisViewPreset | "corner"
+type CompassPoint = {
+  x: number
+  y: number
+  z: number
+}
 
 export type SceneBuildResult = {
   hoverTargets?: HoverTarget[]
@@ -23,6 +29,117 @@ export interface SceneCanvasProps {
   subtitle: string
   up: THREE.Vector3
   buildScene: SceneBuildFn
+}
+
+const AXIS_VIEW_BUTTONS: Array<{
+  preset: AxisViewPreset
+  label: string
+  className: string
+  direction: THREE.Vector3
+}> = [
+  {
+    preset: "x+",
+    label: "X+",
+    className: "axis-x-plus",
+    direction: new THREE.Vector3(1, 0, 0),
+  },
+  {
+    preset: "x-",
+    label: "X-",
+    className: "axis-x-minus",
+    direction: new THREE.Vector3(-1, 0, 0),
+  },
+  {
+    preset: "y+",
+    label: "Y+",
+    className: "axis-y-plus",
+    direction: new THREE.Vector3(0, 1, 0),
+  },
+  {
+    preset: "y-",
+    label: "Y-",
+    className: "axis-y-minus",
+    direction: new THREE.Vector3(0, -1, 0),
+  },
+  {
+    preset: "z+",
+    label: "Z+",
+    className: "axis-z-plus",
+    direction: new THREE.Vector3(0, 0, 1),
+  },
+  {
+    preset: "z-",
+    label: "Z-",
+    className: "axis-z-minus",
+    direction: new THREE.Vector3(0, 0, -1),
+  },
+]
+
+function getViewDirection(viewPreset: ViewPreset, up: THREE.Vector3) {
+  switch (viewPreset) {
+    case "z+":
+      return up.clone().normalize()
+    case "z-":
+      return up.clone().normalize().multiplyScalar(-1)
+    case "y+":
+      return new THREE.Vector3(0, 1, 0)
+    case "y-":
+      return new THREE.Vector3(0, -1, 0)
+    case "x+":
+      return new THREE.Vector3(1, 0, 0)
+    case "x-":
+      return new THREE.Vector3(-1, 0, 0)
+    case "corner":
+    default:
+      return new THREE.Vector3(1, 1, 1).normalize()
+  }
+}
+
+function getCameraUp(direction: THREE.Vector3, sceneUp: THREE.Vector3) {
+  if (Math.abs(direction.dot(sceneUp)) < 0.98) {
+    return sceneUp.clone().normalize()
+  }
+
+  return new THREE.Vector3(0, 1, 0)
+}
+
+function getCompassPoints(
+  camera: THREE.Camera,
+): Record<AxisViewPreset, CompassPoint> {
+  const inverseCameraRotation = camera.quaternion.clone().invert()
+  const points = {} as Record<AxisViewPreset, CompassPoint>
+
+  for (const axis of AXIS_VIEW_BUTTONS) {
+    const projected = axis.direction
+      .clone()
+      .applyQuaternion(inverseCameraRotation)
+    points[axis.preset] = {
+      x: projected.x,
+      y: -projected.y,
+      z: projected.z,
+    }
+  }
+
+  return points
+}
+
+function areCompassPointsEqual(
+  a: Record<AxisViewPreset, CompassPoint> | null,
+  b: Record<AxisViewPreset, CompassPoint>,
+) {
+  if (!a) {
+    return false
+  }
+
+  return AXIS_VIEW_BUTTONS.every((axis) => {
+    const current = a[axis.preset]
+    const next = b[axis.preset]
+    return (
+      Math.abs(current.x - next.x) < 0.001 &&
+      Math.abs(current.y - next.y) < 0.001 &&
+      Math.abs(current.z - next.z) < 0.001
+    )
+  })
 }
 
 function disposeScene(scene: THREE.Scene | null) {
@@ -68,6 +185,13 @@ export function SceneCanvas({
     y: number
     lines: string[]
   } | null>(null)
+  const [compassPoints, setCompassPoints] = useState<Record<
+    AxisViewPreset,
+    CompassPoint
+  > | null>(null)
+  const compassPointsRef = useRef<Record<AxisViewPreset, CompassPoint> | null>(
+    null,
+  )
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -79,19 +203,8 @@ export function SceneCanvas({
     renderer.autoClear = false
 
     const createActiveCamera = () => {
-      const direction = (() => {
-        switch (viewPreset) {
-          case "top":
-            return up.clone().normalize()
-          case "front":
-            return new THREE.Vector3(0, 1, 0)
-          case "side":
-            return new THREE.Vector3(1, 0, 0)
-          case "corner":
-          default:
-            return new THREE.Vector3(1, 1, 1).normalize()
-        }
-      })()
+      const direction = getViewDirection(viewPreset, up)
+      const cameraUp = getCameraUp(direction, up)
       const distance = 90
 
       if (projection === "orthographic") {
@@ -108,12 +221,12 @@ export function SceneCanvas({
           0.1,
           1000,
         )
-        camera.up.copy(up)
+        camera.up.copy(cameraUp)
         camera.position.copy(direction.multiplyScalar(distance))
         return camera
       }
 
-      const camera = createCamera(up)
+      const camera = createCamera(cameraUp)
       camera.position.copy(direction.multiplyScalar(distance))
       return camera
     }
@@ -133,6 +246,16 @@ export function SceneCanvas({
 
     const resize = () => fitRenderer(renderer, camera, canvas)
     resize()
+    const updateCompass = () => {
+      const nextCompassPoints = getCompassPoints(camera)
+      if (areCompassPointsEqual(compassPointsRef.current, nextCompassPoints)) {
+        return
+      }
+
+      compassPointsRef.current = nextCompassPoints
+      setCompassPoints(nextCompassPoints)
+    }
+    updateCompass()
 
     const updateHover = (clientX: number, clientY: number) => {
       const rect = canvas.getBoundingClientRect()
@@ -189,6 +312,7 @@ export function SceneCanvas({
     const render = () => {
       animationFrame = window.requestAnimationFrame(render)
       controls.update()
+      updateCompass()
       renderer.clear()
       renderer.render(scene, camera)
       renderer.clearDepth()
@@ -209,11 +333,13 @@ export function SceneCanvas({
       disposeScene(scene)
       disposeScene(overlayScene)
       hoverTargetsRef.current = []
+      compassPointsRef.current = null
       rendererRef.current = null
       cameraRef.current = null
       controlsRef.current = null
       sceneRef.current = null
       overlaySceneRef.current = null
+      setCompassPoints(null)
     }
   }, [projection, up, viewPreset])
 
@@ -244,22 +370,22 @@ export function SceneCanvas({
         <div className="viewport-actions">
           <button
             type="button"
-            className={viewPreset === "side" ? "is-active" : undefined}
-            onClick={() => setViewPreset("side")}
+            className={viewPreset === "x+" ? "is-active" : undefined}
+            onClick={() => setViewPreset("x+")}
           >
             Side
           </button>
           <button
             type="button"
-            className={viewPreset === "front" ? "is-active" : undefined}
-            onClick={() => setViewPreset("front")}
+            className={viewPreset === "y+" ? "is-active" : undefined}
+            onClick={() => setViewPreset("y+")}
           >
             Front
           </button>
           <button
             type="button"
-            className={viewPreset === "top" ? "is-active" : undefined}
-            onClick={() => setViewPreset("top")}
+            className={viewPreset === "z+" ? "is-active" : undefined}
+            onClick={() => setViewPreset("z+")}
           >
             Top
           </button>
@@ -285,6 +411,52 @@ export function SceneCanvas({
       </header>
       <div className="viewport-body">
         <canvas ref={canvasRef} />
+        <div className="axis-compass" aria-label="Axis camera compass">
+          {[...AXIS_VIEW_BUTTONS]
+            .sort((a, b) => {
+              const aPoint = compassPoints?.[a.preset]
+              const bPoint = compassPoints?.[b.preset]
+              return (aPoint?.z ?? 0) - (bPoint?.z ?? 0)
+            })
+            .map((axis) => {
+              const point = compassPoints?.[axis.preset] ?? {
+                x: axis.direction.x,
+                y: -axis.direction.y,
+                z: axis.direction.z,
+              }
+              const radius = 28
+              const depth = (point.z + 1) / 2
+
+              return (
+                <button
+                  key={axis.preset}
+                  type="button"
+                  className={`${axis.className} ${
+                    viewPreset === axis.preset ? "is-active" : ""
+                  }`}
+                  style={{
+                    left: `${34 + point.x * radius}px`,
+                    top: `${34 + point.y * radius}px`,
+                    opacity: 0.46 + depth * 0.54,
+                    transform: `scale(${0.72 + depth * 0.24})`,
+                    zIndex: Math.round(depth * 10),
+                  }}
+                  title={`View ${axis.label}`}
+                  aria-label={`View ${axis.label}`}
+                  onClick={() => setViewPreset(axis.preset)}
+                >
+                  {axis.label}
+                </button>
+              )
+            })}
+          <button
+            type="button"
+            className={`axis-center ${viewPreset === "corner" ? "is-active" : ""}`}
+            title="Corner view"
+            aria-label="Corner view"
+            onClick={() => setViewPreset("corner")}
+          />
+        </div>
         {hovered ? (
           <div
             className="hover-label"

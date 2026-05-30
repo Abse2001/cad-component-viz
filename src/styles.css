@@ -904,6 +904,82 @@ summary:focus-visible {
   min-height: 20rem;
 }
 
+.axis-compass {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 4;
+  width: 92px;
+  height: 92px;
+  pointer-events: none;
+}
+
+.axis-compass button {
+  position: absolute;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  color: #ffffff;
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow:
+    0 5px 12px rgba(22, 32, 51, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    filter 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.axis-compass button:hover {
+  filter: saturate(1.12) brightness(1.04);
+}
+
+.axis-compass button.is-active {
+  box-shadow:
+    0 7px 16px rgba(22, 32, 51, 0.2),
+    0 0 0 2px rgba(255, 255, 255, 0.92),
+    0 0 0 4px rgba(29, 95, 208, 0.24);
+}
+
+.axis-compass .axis-x-plus,
+.axis-compass .axis-x-minus {
+  background: #c93345;
+}
+
+.axis-compass .axis-y-plus,
+.axis-compass .axis-y-minus {
+  background: #16834d;
+}
+
+.axis-compass .axis-z-plus,
+.axis-compass .axis-z-minus {
+  background: #2568d8;
+}
+
+.axis-compass .axis-center {
+  top: 38px;
+  left: 38px;
+  width: 16px;
+  height: 16px;
+  background: rgba(248, 251, 255, 0.94);
+  border-color: rgba(196, 208, 224, 0.95);
+}
+
+.axis-compass .axis-center::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--muted-strong);
+}
+
 .hover-label {
   position: absolute;
   transform: translate(-50%, -100%);
