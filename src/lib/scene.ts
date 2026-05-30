@@ -253,7 +253,8 @@ export function makeAxisBadges(bounds: THREE.Box3, transform?: AxisTransform) {
     const sprite = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: makeBadgeTexture(label.text, label.fill),
-        depthTest: false,
+        depthTest: true,
+        depthWrite: false,
       }),
     )
     sprite.position.copy(label.position)
