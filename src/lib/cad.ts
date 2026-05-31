@@ -505,22 +505,69 @@ function extractGeometryFromObject3D(
   return mergedGeometry
 }
 
-export function computePlacement(input: Required<CadComponentInput>) {
+function getAxisExtent(size: THREE.Vector3, direction: AxisDirection) {
+  if (direction.startsWith("x")) {
+    return size.x
+  }
+  if (direction.startsWith("y")) {
+    return size.y
+  }
+  return size.z
+}
+
+function getAlignmentOffsetFromCenter(
+  alignment: Alignment,
+  input: Required<CadComponentInput>,
+  bounds?: THREE.Box3,
+) {
+  if (alignment === "center") {
+    return new THREE.Vector3()
+  }
+
+  const size =
+    bounds?.getSize(new THREE.Vector3()) ??
+    new THREE.Vector3(input.size.x, input.size.y, input.size.z)
+  const boardUp = directionToVector(input.model_board_normal_direction)
+  const halfExtent = getAxisExtent(size, input.model_board_normal_direction) / 2
+
+  return boardUp.multiplyScalar(-halfExtent)
+}
+
+export function computePlacement(
+  input: Required<CadComponentInput>,
+  bounds?: THREE.Box3,
+) {
   const rotation = normalToEuler(input.model_board_normal_direction)
   const modelOrigin = new THREE.Vector3(
     input.model_origin_position.x,
     input.model_origin_position.y,
     input.model_origin_position.z,
   )
+  const modelOriginAlignmentOffset = getAlignmentOffsetFromCenter(
+    input.model_origin_alignment,
+    input,
+    bounds,
+  )
+  const anchorAlignmentOffset = getAlignmentOffsetFromCenter(
+    input.anchor_alignment,
+    input,
+    bounds,
+  )
+  const anchorPoint = modelOrigin
+    .clone()
+    .add(anchorAlignmentOffset.sub(modelOriginAlignmentOffset))
   const rotatedOrigin = modelOrigin.clone().applyEuler(rotation)
+  const rotatedAnchorPoint = anchorPoint.clone().applyEuler(rotation)
   const translation = new THREE.Vector3(
-    input.position.x - rotatedOrigin.x,
-    input.position.y - rotatedOrigin.y,
-    input.position.z - rotatedOrigin.z,
+    input.position.x - rotatedAnchorPoint.x,
+    input.position.y - rotatedAnchorPoint.y,
+    input.position.z - rotatedAnchorPoint.z,
   )
 
   return {
+    anchorPoint,
     modelOrigin,
+    rotatedAnchorPoint,
     rotatedOrigin,
     rotation,
     translation,

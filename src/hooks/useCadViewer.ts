@@ -82,11 +82,11 @@ export function useCadViewer({
   )
   const { model: loadedModel, status, message } = useCadGeometry(modelSource)
   const geometry = loadedModel?.geometry ?? fallbackGeometry
-  const placement = useMemo(
-    () => computePlacement(debouncedCad),
-    [debouncedCad],
-  )
   const geometryBounds = useMemo(() => getGeometryBounds(geometry), [geometry])
+  const placement = useMemo(
+    () => computePlacement(debouncedCad, geometryBounds.boundingBox),
+    [debouncedCad, geometryBounds.boundingBox],
+  )
   const sceneBounds = useMemo(() => {
     const transform = new THREE.Matrix4().compose(
       placement.translation,
