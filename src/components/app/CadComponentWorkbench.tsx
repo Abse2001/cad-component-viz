@@ -258,6 +258,7 @@ export function CadComponentWorkbench({
             title={viewer.title}
             subtitle={viewer.subtitle}
             up={viewer.up}
+            sceneBounds={viewer.sceneBounds}
             buildScene={viewer.buildScene}
           />
         )}

@@ -37,6 +37,7 @@ export interface UseCadViewerResult {
   title: string
   subtitle: string
   up: THREE.Vector3
+  sceneBounds: THREE.Box3
   buildScene: SceneBuildFn
   status: "idle" | "loading" | "ready" | "fallback"
   message: string
@@ -86,6 +87,31 @@ export function useCadViewer({
     [debouncedCad],
   )
   const geometryBounds = useMemo(() => getGeometryBounds(geometry), [geometry])
+  const sceneBounds = useMemo(() => {
+    const transform = new THREE.Matrix4().compose(
+      placement.translation,
+      new THREE.Quaternion().setFromEuler(placement.rotation),
+      new THREE.Vector3(1, 1, 1),
+    )
+    const bounds = geometryBounds.boundingBox.clone().applyMatrix4(transform)
+
+    if (showBoard) {
+      bounds.union(
+        new THREE.Box3(
+          new THREE.Vector3(-28, -28, -debouncedBoardThickness / 2),
+          new THREE.Vector3(28, 28, debouncedBoardThickness / 2),
+        ),
+      )
+    }
+
+    return bounds
+  }, [
+    debouncedBoardThickness,
+    geometryBounds.boundingBox,
+    placement.rotation,
+    placement.translation,
+    showBoard,
+  ])
 
   const summary = useMemo<ViewerSummary>(() => {
     const sourceType = localModelFile
@@ -225,6 +251,7 @@ export function useCadViewer({
     subtitle:
       "The model is shown in board space. Toggle the green board overlay on or off.",
     up: BOARD_UP_VECTOR,
+    sceneBounds,
     buildScene,
     status,
     message,

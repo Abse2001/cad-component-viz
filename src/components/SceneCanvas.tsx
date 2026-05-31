@@ -28,6 +28,7 @@ export interface SceneCanvasProps {
   title: string
   subtitle: string
   up: THREE.Vector3
+  sceneBounds: THREE.Box3
   buildScene: SceneBuildFn
 }
 
@@ -142,6 +143,97 @@ function areCompassPointsEqual(
   })
 }
 
+function getSceneFrame(bounds: THREE.Box3) {
+  if (bounds.isEmpty()) {
+    return {
+      center: new THREE.Vector3(0, 0, 0),
+      radius: 24,
+    }
+  }
+
+  const sphere = bounds.getBoundingSphere(new THREE.Sphere())
+  return {
+    center: sphere.center,
+    radius: Math.max(sphere.radius, 1),
+  }
+}
+
+function getViewportAspect(canvas: HTMLCanvasElement) {
+  return Math.max(canvas.clientWidth, 1) / Math.max(canvas.clientHeight, 1)
+}
+
+function getOrthographicFrustumHeight(radius: number, aspect: number) {
+  const fitPadding = 1.28
+  return (radius * 2 * fitPadding) / Math.min(aspect, 1)
+}
+
+function configureCameraForView({
+  camera,
+  canvas,
+  controls,
+  sceneBounds,
+  up,
+  viewPreset,
+}: {
+  camera: THREE.Camera
+  canvas: HTMLCanvasElement
+  controls: ReturnType<typeof createControls>
+  sceneBounds: THREE.Box3
+  up: THREE.Vector3
+  viewPreset: ViewPreset
+}) {
+  const direction = getViewDirection(viewPreset, up)
+  const frame = getSceneFrame(sceneBounds)
+  const distance = Math.max(frame.radius * 3.2, 12)
+  const near = Math.max(frame.radius / 500, 0.01)
+  const far = Math.max(distance + frame.radius * 100, 1000)
+  const position = frame.center
+    .clone()
+    .add(direction.clone().multiplyScalar(distance))
+
+  controls.target.copy(frame.center)
+  controls.maxDistance = far * 0.45
+  camera.up.copy(getCameraUp(direction, up))
+  camera.position.copy(position)
+
+  if (camera instanceof THREE.PerspectiveCamera) {
+    camera.near = near
+    camera.far = far
+    camera.zoom = 1
+    camera.aspect = getViewportAspect(canvas)
+    const fovRadians = THREE.MathUtils.degToRad(camera.fov)
+    const fitDistance = frame.radius / Math.sin(fovRadians / 2)
+    camera.position.copy(
+      frame.center
+        .clone()
+        .add(
+          getViewDirection(viewPreset, up).multiplyScalar(fitDistance * 1.12),
+        ),
+    )
+  }
+
+  if (camera instanceof THREE.OrthographicCamera) {
+    camera.near = near
+    camera.far = far
+    camera.zoom = 1
+    const aspect = getViewportAspect(canvas)
+    const frustumHeight = getOrthographicFrustumHeight(frame.radius, aspect)
+    camera.top = frustumHeight / 2
+    camera.bottom = -frustumHeight / 2
+    camera.left = (-frustumHeight * aspect) / 2
+    camera.right = (frustumHeight * aspect) / 2
+  }
+
+  camera.lookAt(frame.center)
+  if (
+    camera instanceof THREE.PerspectiveCamera ||
+    camera instanceof THREE.OrthographicCamera
+  ) {
+    camera.updateProjectionMatrix()
+  }
+  controls.update()
+}
+
 function disposeScene(scene: THREE.Scene | null) {
   if (!scene) {
     return
@@ -169,6 +261,7 @@ export function SceneCanvas({
   title,
   subtitle,
   up,
+  sceneBounds,
   buildScene,
 }: SceneCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -180,6 +273,7 @@ export function SceneCanvas({
   const hoverTargetsRef = useRef<HoverTarget[]>([])
   const [projection, setProjection] = useState<ProjectionMode>("orthographic")
   const [viewPreset, setViewPreset] = useState<ViewPreset>("corner")
+  const [fitRequest, setFitRequest] = useState(0)
   const [hovered, setHovered] = useState<{
     x: number
     y: number
@@ -192,6 +286,11 @@ export function SceneCanvas({
   const compassPointsRef = useRef<Record<AxisViewPreset, CompassPoint> | null>(
     null,
   )
+  const sceneBoundsRef = useRef(sceneBounds)
+
+  useEffect(() => {
+    sceneBoundsRef.current = sceneBounds
+  }, [sceneBounds])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -205,29 +304,23 @@ export function SceneCanvas({
     const createActiveCamera = () => {
       const direction = getViewDirection(viewPreset, up)
       const cameraUp = getCameraUp(direction, up)
-      const distance = 90
 
       if (projection === "orthographic") {
-        const aspect = Math.max(
-          canvas.clientWidth / Math.max(canvas.clientHeight, 1),
-          1,
-        )
+        const aspect = getViewportAspect(canvas)
         const frustum = 40
         const camera = new THREE.OrthographicCamera(
-          -frustum * aspect,
-          frustum * aspect,
-          frustum,
-          -frustum,
+          (-frustum * aspect) / 2,
+          (frustum * aspect) / 2,
+          frustum / 2,
+          -frustum / 2,
           0.1,
           1000,
         )
         camera.up.copy(cameraUp)
-        camera.position.copy(direction.multiplyScalar(distance))
         return camera
       }
 
       const camera = createCamera(cameraUp)
-      camera.position.copy(direction.multiplyScalar(distance))
       return camera
     }
 
@@ -244,7 +337,17 @@ export function SceneCanvas({
     sceneRef.current = scene
     overlaySceneRef.current = overlayScene
 
-    const resize = () => fitRenderer(renderer, camera, canvas)
+    const resize = () => {
+      fitRenderer(renderer, camera, canvas)
+      configureCameraForView({
+        camera,
+        canvas,
+        controls,
+        sceneBounds: sceneBoundsRef.current,
+        up,
+        viewPreset,
+      })
+    }
     resize()
     const updateCompass = () => {
       const nextCompassPoints = getCompassPoints(camera)
@@ -344,6 +447,26 @@ export function SceneCanvas({
   }, [projection, up, viewPreset])
 
   useEffect(() => {
+    const canvas = canvasRef.current
+    const renderer = rendererRef.current
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    if (!canvas || !renderer || !camera || !controls) {
+      return
+    }
+
+    fitRenderer(renderer, camera, canvas)
+    configureCameraForView({
+      camera,
+      canvas,
+      controls,
+      sceneBounds: sceneBoundsRef.current,
+      up,
+      viewPreset,
+    })
+  }, [fitRequest])
+
+  useEffect(() => {
     const scene = sceneRef.current
     const overlayScene = overlaySceneRef.current
     if (!scene || !overlayScene) {
@@ -395,6 +518,13 @@ export function SceneCanvas({
             onClick={() => setViewPreset("corner")}
           >
             Corner
+          </button>
+          <button
+            type="button"
+            className="projection-toggle"
+            onClick={() => setFitRequest((current) => current + 1)}
+          >
+            Fit
           </button>
           <button
             type="button"
