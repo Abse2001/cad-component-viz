@@ -147,6 +147,184 @@ function makeBadgeTexture(text: string, fillStyle: string) {
   return texture
 }
 
+function makeDimensionTexture(text: string, color: string) {
+  const canvas = document.createElement("canvas")
+  canvas.width = 256
+  canvas.height = 80
+  const ctx = canvas.getContext("2d")
+  if (!ctx) {
+    return new THREE.CanvasTexture(canvas)
+  }
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = "rgba(255, 255, 255, 0.94)"
+  ctx.strokeStyle = "rgba(196, 208, 224, 0.95)"
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  ctx.roundRect(8, 10, 240, 56, 14)
+  ctx.fill()
+  ctx.stroke()
+
+  ctx.fillStyle = color
+  ctx.font = "700 24px sans-serif"
+  ctx.textAlign = "center"
+  ctx.textBaseline = "middle"
+  ctx.fillText(text, 128, 39)
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.needsUpdate = true
+  return texture
+}
+
+function makeDimensionLabel(
+  text: string,
+  color: string,
+  position: THREE.Vector3,
+) {
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: makeDimensionTexture(text, color),
+      depthTest: false,
+      depthWrite: false,
+    }),
+  )
+  sprite.position.copy(position)
+  sprite.scale.set(11, 3.4, 1)
+  return sprite
+}
+
+function makeLine(points: THREE.Vector3[], color: number) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points)
+  return new THREE.Line(
+    geometry,
+    new THREE.LineBasicMaterial({
+      color,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.9,
+    }),
+  )
+}
+
+function formatDimension(value: number) {
+  return `${value.toFixed(2)} mm`
+}
+
+export function makeDimensionOverlay(bounds: THREE.Box3) {
+  const group = new THREE.Group()
+  const size = bounds.getSize(new THREE.Vector3())
+  const maxDimension = Math.max(size.x, size.y, size.z, 1)
+  const margin = maxDimension * 0.08 + 1.8
+  const tick = Math.min(Math.max(maxDimension * 0.035, 0.8), 3)
+  const xColor = 0xc93345
+  const yColor = 0x16834d
+  const zColor = 0x2568d8
+
+  group.add(new THREE.Box3Helper(bounds, 0x40506a))
+
+  const xStart = new THREE.Vector3(
+    bounds.min.x,
+    bounds.min.y - margin,
+    bounds.min.z - margin,
+  )
+  const xEnd = new THREE.Vector3(
+    bounds.max.x,
+    bounds.min.y - margin,
+    bounds.min.z - margin,
+  )
+  const yStart = new THREE.Vector3(
+    bounds.min.x - margin,
+    bounds.min.y,
+    bounds.min.z - margin,
+  )
+  const yEnd = new THREE.Vector3(
+    bounds.min.x - margin,
+    bounds.max.y,
+    bounds.min.z - margin,
+  )
+  const zStart = new THREE.Vector3(
+    bounds.max.x + margin,
+    bounds.min.y - margin,
+    bounds.min.z,
+  )
+  const zEnd = new THREE.Vector3(
+    bounds.max.x + margin,
+    bounds.min.y - margin,
+    bounds.max.z,
+  )
+
+  group.add(makeLine([xStart, xEnd], xColor))
+  group.add(makeLine([yStart, yEnd], yColor))
+  group.add(makeLine([zStart, zEnd], zColor))
+
+  for (const point of [xStart, xEnd]) {
+    group.add(
+      makeLine(
+        [
+          point.clone().add(new THREE.Vector3(0, -tick, 0)),
+          point.clone().add(new THREE.Vector3(0, tick, 0)),
+        ],
+        xColor,
+      ),
+    )
+  }
+  for (const point of [yStart, yEnd]) {
+    group.add(
+      makeLine(
+        [
+          point.clone().add(new THREE.Vector3(-tick, 0, 0)),
+          point.clone().add(new THREE.Vector3(tick, 0, 0)),
+        ],
+        yColor,
+      ),
+    )
+  }
+  for (const point of [zStart, zEnd]) {
+    group.add(
+      makeLine(
+        [
+          point.clone().add(new THREE.Vector3(tick, 0, 0)),
+          point.clone().add(new THREE.Vector3(-tick, 0, 0)),
+        ],
+        zColor,
+      ),
+    )
+  }
+
+  group.add(
+    makeDimensionLabel(
+      `X ${formatDimension(size.x)}`,
+      "#c93345",
+      xStart
+        .clone()
+        .lerp(xEnd, 0.5)
+        .add(new THREE.Vector3(0, -tick * 1.7, 0)),
+    ),
+  )
+  group.add(
+    makeDimensionLabel(
+      `Y ${formatDimension(size.y)}`,
+      "#16834d",
+      yStart
+        .clone()
+        .lerp(yEnd, 0.5)
+        .add(new THREE.Vector3(-tick * 1.7, 0, 0)),
+    ),
+  )
+  group.add(
+    makeDimensionLabel(
+      `Z ${formatDimension(size.z)}`,
+      "#2568d8",
+      zStart
+        .clone()
+        .lerp(zEnd, 0.5)
+        .add(new THREE.Vector3(tick * 1.7, 0, 0)),
+    ),
+  )
+
+  return group
+}
+
 function applyAxisTransform(
   direction: THREE.Vector3,
   transform?: AxisTransform,

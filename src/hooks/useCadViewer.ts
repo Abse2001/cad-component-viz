@@ -12,6 +12,7 @@ import {
   makeAxesToBadgePositions,
   makeBoard,
   makeBoardNormalArrow,
+  makeDimensionOverlay,
   makeGrid,
   makeHoverMarker,
 } from "../lib/scene"
@@ -171,72 +172,76 @@ export function useCadViewer({
   ])
 
   const buildScene = useMemo<SceneBuildFn>(
-    () => (scene) => {
-      addDefaultLights(scene)
-      scene.add(makeGrid(90, 36, "z+"))
+    () =>
+      (scene, { showDimensions }) => {
+        addDefaultLights(scene)
+        scene.add(makeGrid(90, 36, "z+"))
 
-      if (showBoard) {
-        scene.add(makeBoard(debouncedBoardThickness))
-      }
+        if (showBoard) {
+          scene.add(makeBoard(debouncedBoardThickness))
+        }
 
-      const placed = new THREE.Group()
-      placed.rotation.copy(placement.rotation)
-      placed.position.copy(placement.translation)
+        const placed = new THREE.Group()
+        placed.rotation.copy(placement.rotation)
+        placed.position.copy(placement.translation)
 
-      if (loadedModel) {
-        placed.add(cloneModelObject(loadedModel.object))
-      } else {
-        placed.add(
-          new THREE.Mesh(
-            geometry.clone(),
-            new THREE.MeshPhongMaterial({
-              color: 0x79a8ff,
-              transparent: true,
-              opacity: 0.84,
-              side: THREE.DoubleSide,
-            }),
+        if (loadedModel) {
+          placed.add(cloneModelObject(loadedModel.object))
+        } else {
+          placed.add(
+            new THREE.Mesh(
+              geometry.clone(),
+              new THREE.MeshPhongMaterial({
+                color: 0x79a8ff,
+                transparent: true,
+                opacity: 0.84,
+                side: THREE.DoubleSide,
+              }),
+            ),
+          )
+        }
+
+        scene.add(placed)
+        placed.updateMatrixWorld(true)
+
+        const boardPosition = new THREE.Vector3(
+          debouncedCad.position.x,
+          debouncedCad.position.y,
+          debouncedCad.position.z,
+        )
+        const boardPositionMarker = makeHoverMarker(boardPosition, [
+          `Cad Component Position ${formatVector3(boardPosition)}`,
+          `Anchor Alignment: ${debouncedCad.anchor_alignment}`,
+        ])
+        const modelOriginWorld = placement.modelOrigin
+          .clone()
+          .applyEuler(placement.rotation)
+          .add(placement.translation)
+        const modelOriginMarker = makeHoverMarker(modelOriginWorld, [
+          `Model Origin ${formatVector3(modelOriginWorld)}`,
+          `Model Origin Alignment: ${debouncedCad.model_origin_alignment}`,
+        ])
+        const placedBounds = geometryBounds.boundingBox
+          .clone()
+          .applyMatrix4(placed.matrixWorld)
+
+        scene.add(makeAxesToBadgePositions(placedBounds, placement.rotation))
+        scene.add(makeAxisBadges(placedBounds, placement.rotation))
+        if (showDimensions) {
+          scene.add(makeDimensionOverlay(placedBounds))
+        }
+        scene.add(
+          makeBoardNormalArrow(
+            modelOriginWorld,
+            debouncedCad.model_board_normal_direction,
           ),
         )
-      }
 
-      scene.add(placed)
-      placed.updateMatrixWorld(true)
-
-      const boardPosition = new THREE.Vector3(
-        debouncedCad.position.x,
-        debouncedCad.position.y,
-        debouncedCad.position.z,
-      )
-      const boardPositionMarker = makeHoverMarker(boardPosition, [
-        `Cad Component Position ${formatVector3(boardPosition)}`,
-        `Anchor Alignment: ${debouncedCad.anchor_alignment}`,
-      ])
-      const modelOriginWorld = placement.modelOrigin
-        .clone()
-        .applyEuler(placement.rotation)
-        .add(placement.translation)
-      const modelOriginMarker = makeHoverMarker(modelOriginWorld, [
-        `Model Origin ${formatVector3(modelOriginWorld)}`,
-        `Model Origin Alignment: ${debouncedCad.model_origin_alignment}`,
-      ])
-      const placedBounds = geometryBounds.boundingBox
-        .clone()
-        .applyMatrix4(placed.matrixWorld)
-
-      scene.add(makeAxesToBadgePositions(placedBounds, placement.rotation))
-      scene.add(makeAxisBadges(placedBounds, placement.rotation))
-      scene.add(
-        makeBoardNormalArrow(
-          modelOriginWorld,
-          debouncedCad.model_board_normal_direction,
-        ),
-      )
-
-      return {
-        hoverTargets: [boardPositionMarker.target, modelOriginMarker.target],
-        overlayObjects: [boardPositionMarker.group, modelOriginMarker.group],
-      }
-    },
+        return {
+          hoverTargets: [boardPositionMarker.target, modelOriginMarker.target],
+          overlayObjects: [boardPositionMarker.group, modelOriginMarker.group],
+        }
+      },
     [
       debouncedCad.anchor_alignment,
       debouncedCad.model_board_normal_direction,

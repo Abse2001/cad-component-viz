@@ -28,7 +28,14 @@ export type SceneBuildResult = {
   overlayObjects?: THREE.Object3D[]
 }
 
-export type SceneBuildFn = (scene: THREE.Scene) => SceneBuildResult | void
+export interface SceneBuildOptions {
+  showDimensions: boolean
+}
+
+export type SceneBuildFn = (
+  scene: THREE.Scene,
+  options: SceneBuildOptions,
+) => SceneBuildResult | void
 
 export interface SceneCanvasProps {
   title: string
@@ -43,18 +50,32 @@ function disposeScene(scene: THREE.Scene | null) {
     return
   }
 
+  const disposeMaterial = (material: THREE.Material) => {
+    for (const value of Object.values(material)) {
+      if (value instanceof THREE.Texture) {
+        value.dispose()
+      }
+    }
+    material.dispose()
+  }
+
   scene.traverse((object: THREE.Object3D) => {
-    if (!(object instanceof THREE.Mesh)) {
-      return
+    if (
+      "geometry" in object &&
+      object.geometry instanceof THREE.BufferGeometry
+    ) {
+      object.geometry.dispose()
     }
 
-    object.geometry.dispose()
-    if (Array.isArray(object.material)) {
-      for (const material of object.material) {
-        material.dispose()
+    if ("material" in object) {
+      const material = object.material
+      if (Array.isArray(material)) {
+        for (const entry of material) {
+          disposeMaterial(entry)
+        }
+      } else if (material instanceof THREE.Material) {
+        disposeMaterial(material)
       }
-    } else {
-      object.material.dispose()
     }
   })
 
@@ -77,6 +98,7 @@ export function SceneCanvas({
   const hoverTargetsRef = useRef<HoverTarget[]>([])
   const [projection, setProjection] = useState<ProjectionMode>("orthographic")
   const [viewPreset, setViewPreset] = useState<ViewPreset>("corner")
+  const [showDimensions, setShowDimensions] = useState(false)
   const [fitRequest, setFitRequest] = useState(0)
   const [hovered, setHovered] = useState<{
     x: number
@@ -279,14 +301,14 @@ export function SceneCanvas({
 
     disposeScene(scene)
     disposeScene(overlayScene)
-    const buildResult = buildScene(scene)
+    const buildResult = buildScene(scene, { showDimensions })
     hoverTargetsRef.current = buildResult?.hoverTargets ?? []
 
     for (const object of buildResult?.overlayObjects ?? []) {
       overlayScene.add(object)
     }
     requestRenderRef.current()
-  }, [buildScene, projection, up, viewPreset])
+  }, [buildScene, projection, showDimensions, up, viewPreset])
 
   return (
     <section className="viewport">
@@ -296,9 +318,11 @@ export function SceneCanvas({
           <p>{subtitle}</p>
         </div>
         <ViewportToolbar
+          showDimensions={showDimensions}
           projection={projection}
           viewPreset={viewPreset}
           onFit={() => setFitRequest((current) => current + 1)}
+          onDimensionsToggle={() => setShowDimensions((current) => !current)}
           onProjectionToggle={() =>
             setProjection((current) =>
               current === "perspective" ? "orthographic" : "perspective",

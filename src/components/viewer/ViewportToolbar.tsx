@@ -1,14 +1,18 @@
 import type { ProjectionMode, ViewPreset } from "./viewerTypes"
 
 export function ViewportToolbar({
+  showDimensions,
   projection,
   viewPreset,
+  onDimensionsToggle,
   onFit,
   onProjectionToggle,
   onViewPresetChange,
 }: {
+  showDimensions: boolean
   projection: ProjectionMode
   viewPreset: ViewPreset
+  onDimensionsToggle: () => void
   onFit: () => void
   onProjectionToggle: () => void
   onViewPresetChange: (viewPreset: ViewPreset) => void
@@ -45,6 +49,15 @@ export function ViewportToolbar({
       </button>
       <button type="button" className="projection-toggle" onClick={onFit}>
         Fit
+      </button>
+      <button
+        type="button"
+        className={
+          showDimensions ? "is-active projection-toggle" : "projection-toggle"
+        }
+        onClick={onDimensionsToggle}
+      >
+        Dimensions
       </button>
       <button
         type="button"
