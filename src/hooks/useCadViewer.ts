@@ -17,7 +17,7 @@ import {
 } from "../lib/scene"
 import { useCadGeometry } from "./useCadGeometry"
 import { useDebouncedValue } from "./useDebouncedValue"
-import type { ModelSource } from "../app/types"
+import type { CadModelStats, ModelSource } from "../app/types"
 import type { CadComponentInput } from "../types"
 import type { SceneBuildFn } from "../components/SceneCanvas"
 
@@ -43,6 +43,7 @@ export interface UseCadViewerResult {
   message: string
   progress: number | null
   summary: ViewerSummary
+  modelStats: CadModelStats | null
 }
 
 interface UseCadViewerParams {
@@ -86,6 +87,7 @@ export function useCadViewer({
     status,
     message,
     progress,
+    stats,
   } = useCadGeometry(modelSource)
   const geometry = loadedModel?.geometry ?? fallbackGeometry
   const geometryBounds = useMemo(() => getGeometryBounds(geometry), [geometry])
@@ -264,5 +266,6 @@ export function useCadViewer({
     message,
     progress,
     summary,
+    modelStats: stats,
   }
 }

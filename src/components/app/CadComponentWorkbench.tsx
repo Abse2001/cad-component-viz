@@ -13,6 +13,50 @@ import type { UseCadComponentEditorResult } from "../../hooks/useCadComponentEdi
 import type { UseCadViewerResult } from "../../hooks/useCadViewer"
 import type { Alignment, AxisDirection } from "../../types"
 
+function formatCount(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "-"
+  }
+
+  return new Intl.NumberFormat("en-US").format(value)
+}
+
+function formatBytes(value: number | null | undefined) {
+  if (!value) {
+    return "-"
+  }
+
+  const units = ["B", "KB", "MB", "GB"]
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`
+}
+
+function formatMs(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "-"
+  }
+
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(2)} s`
+  }
+
+  return `${Math.round(value)} ms`
+}
+
+function formatBounds(stats: UseCadViewerResult["modelStats"]) {
+  if (!stats) {
+    return "-"
+  }
+
+  return `${stats.bounds.x.toFixed(2)} x ${stats.bounds.y.toFixed(2)} x ${stats.bounds.z.toFixed(2)} mm`
+}
+
 interface CadComponentWorkbenchProps {
   editor: UseCadComponentEditorResult
   viewer: UseCadViewerResult
@@ -70,6 +114,53 @@ export function CadComponentWorkbench({
                   <p>{`Thickness ${editor.boardThickness.toFixed(2)} mm`}</p>
                 </article>
               </div>
+
+              <details className="model-stats-panel">
+                <summary className="model-stats-header">
+                  <span className="summary-label">Model Stats</span>
+                  <strong>{viewer.modelStats?.format ?? "No model"}</strong>
+                </summary>
+                <div className="model-stats-grid">
+                  <div>
+                    <span>Meshes</span>
+                    <strong>{formatCount(viewer.modelStats?.meshCount)}</strong>
+                  </div>
+                  <div>
+                    <span>Vertices</span>
+                    <strong>
+                      {formatCount(viewer.modelStats?.vertexCount)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Triangles</span>
+                    <strong>
+                      {formatCount(viewer.modelStats?.triangleCount)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Bounds</span>
+                    <strong>{formatBounds(viewer.modelStats)}</strong>
+                  </div>
+                  <div>
+                    <span>File Size</span>
+                    <strong>
+                      {formatBytes(viewer.modelStats?.fileSizeBytes)}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Download</span>
+                    <strong>{formatMs(viewer.modelStats?.downloadMs)}</strong>
+                  </div>
+                  <div>
+                    <span>Parse</span>
+                    <strong>{formatMs(viewer.modelStats?.parseMs)}</strong>
+                  </div>
+                  <div>
+                    <span>Total</span>
+                    <strong>{formatMs(viewer.modelStats?.totalMs)}</strong>
+                  </div>
+                </div>
+              </details>
 
               <div className="actions hero-actions">
                 <button

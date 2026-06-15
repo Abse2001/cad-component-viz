@@ -14,4 +14,21 @@ export interface CadGeometryState {
   status: CadGeometryStatus
   message: string
   progress: number | null
+  stats: CadModelStats | null
+}
+
+export interface CadModelStats {
+  format: string
+  meshCount: number
+  vertexCount: number
+  triangleCount: number
+  bounds: {
+    x: number
+    y: number
+    z: number
+  }
+  fileSizeBytes: number | null
+  downloadMs: number | null
+  parseMs: number
+  totalMs: number
 }

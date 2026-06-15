@@ -470,6 +470,81 @@ summary:focus-visible {
   text-overflow: ellipsis;
 }
 
+.model-stats-panel {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(214, 223, 235, 0.95);
+  background: rgba(249, 251, 254, 0.95);
+}
+
+.model-stats-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.model-stats-header::-webkit-details-marker {
+  display: none;
+}
+
+.model-stats-header::after {
+  content: "+";
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.model-stats-panel[open] .model-stats-header {
+  margin-bottom: 10px;
+}
+
+.model-stats-panel[open] .model-stats-header::after {
+  content: "-";
+}
+
+.model-stats-header strong {
+  color: var(--text);
+  font-size: 0.82rem;
+  margin-left: auto;
+}
+
+.model-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.model-stats-grid div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(238, 243, 250, 0.78);
+}
+
+.model-stats-grid span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.model-stats-grid strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -1037,6 +1112,10 @@ summary:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .model-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .viewer-panel {
     min-height: 560px;
     height: auto;
@@ -1077,6 +1156,10 @@ summary:focus-visible {
 
   .viewport-actions {
     justify-content: flex-start;
+  }
+
+  .model-stats-grid {
+    grid-template-columns: 1fr;
   }
 
   .sidebar-toolbar {
