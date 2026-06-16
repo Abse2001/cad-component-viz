@@ -34,6 +34,7 @@ export interface UseCadComponentEditorResult {
   cad: CadState
   boardThickness: number
   showBoard: boolean
+  showPlacement: boolean
   localModelFile: File | null
   isDragActive: boolean
   importText: string
@@ -44,6 +45,7 @@ export interface UseCadComponentEditorResult {
   setMode: (mode: AppMode) => void
   setBoardThickness: (value: number) => void
   setShowBoard: (value: boolean) => void
+  setShowPlacement: (value: boolean) => void
   setImportText: (value: string) => void
   updateField: <K extends keyof CadState>(key: K, value: CadState[K]) => void
   updateVector: (input: VectorUpdateInput) => void
@@ -64,6 +66,7 @@ export function useCadComponentEditor(): UseCadComponentEditorResult {
   )
   const [boardThickness, setBoardThickness] = useState(1.6)
   const [showBoard, setShowBoard] = useState(true)
+  const [showPlacement, setShowPlacement] = useState(false)
   const [localModelFile, setLocalModelFile] = useState<File | null>(null)
   const [isDragActive, setIsDragActive] = useState(false)
   const [importText, setImportText] = useState(() =>
@@ -203,6 +206,7 @@ export function useCadComponentEditor(): UseCadComponentEditorResult {
     cad,
     boardThickness,
     showBoard,
+    showPlacement,
     localModelFile,
     isDragActive,
     importText,
@@ -218,6 +222,7 @@ export function useCadComponentEditor(): UseCadComponentEditorResult {
     setMode,
     setBoardThickness,
     setShowBoard,
+    setShowPlacement,
     setImportText,
     updateField,
     updateVector,

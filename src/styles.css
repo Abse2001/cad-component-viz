@@ -1070,6 +1070,48 @@ summary:focus-visible {
   background: var(--muted-strong);
 }
 
+.placement-key {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(214, 223, 235, 0.95);
+  background: rgba(238, 243, 250, 0.78);
+}
+
+.placement-key div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.placement-key strong {
+  color: var(--text);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.placement-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.placement-dot.origin {
+  background: #b83280;
+}
+
+.placement-dot.anchor {
+  background: #f59e0b;
+}
+
+.placement-dot.position {
+  background: #1d5fd0;
+}
+
 .hover-label {
   position: absolute;
   transform: translate(-50%, -100%);

@@ -10,6 +10,7 @@ function App() {
     boardThickness: editor.boardThickness,
     localModelFile: editor.localModelFile,
     showBoard: editor.showBoard,
+    showPlacement: editor.showPlacement,
   })
 
   if (editor.mode === "landing") {
