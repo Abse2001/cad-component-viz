@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react"
 import * as THREE from "three"
 import {
+  cloneModelObject,
   detectModelFormat,
   disposeModelObject,
   fetchModelBuffer,
+  type LoadedModel,
+  type ModelFormat,
   parseModelFromBuffer,
   parseModelFromUnknownBuffer,
   parseModelFromUrl,
@@ -33,6 +36,80 @@ function getFileSize(source: ModelSource, buffer?: ArrayBuffer) {
   return buffer?.byteLength ?? null
 }
 
+interface CachedModelEntry {
+  model: LoadedModel
+  format: ModelFormat
+  fileSizeBytes: number | null
+}
+
+const MODEL_CACHE_LIMIT = 8
+const modelCache = new Map<string, CachedModelEntry>()
+
+function getModelCacheKey(source: ModelSource) {
+  if (source.kind === "url") {
+    return `url:${source.value.trim()}`
+  }
+
+  if (source.kind === "file") {
+    return `file:${source.file.name}:${source.file.size}:${source.file.lastModified}`
+  }
+
+  return null
+}
+
+function cloneLoadedModel(model: LoadedModel): LoadedModel {
+  return {
+    geometry: model.geometry.clone(),
+    object: cloneModelObject(model.object),
+  }
+}
+
+function disposeLoadedModel(model: LoadedModel) {
+  model.geometry.dispose()
+  disposeModelObject(model.object)
+}
+
+function getCachedModel(cacheKey: string | null) {
+  if (!cacheKey) {
+    return null
+  }
+
+  const entry = modelCache.get(cacheKey)
+  if (!entry) {
+    return null
+  }
+
+  modelCache.delete(cacheKey)
+  modelCache.set(cacheKey, entry)
+  return entry
+}
+
+function setCachedModel(cacheKey: string | null, entry: CachedModelEntry) {
+  if (!cacheKey) {
+    return
+  }
+
+  const previous = modelCache.get(cacheKey)
+  if (previous) {
+    disposeLoadedModel(previous.model)
+    modelCache.delete(cacheKey)
+  }
+
+  modelCache.set(cacheKey, entry)
+
+  while (modelCache.size > MODEL_CACHE_LIMIT) {
+    const oldestKey = modelCache.keys().next().value
+    if (!oldestKey) {
+      break
+    }
+    const oldest = modelCache.get(oldestKey)
+    if (oldest) {
+      disposeLoadedModel(oldest.model)
+    }
+    modelCache.delete(oldestKey)
+  }
+}
+
 function getTriangleCount(geometry: THREE.BufferGeometry) {
   const index = geometry.getIndex()
   if (index) {
@@ -48,6 +125,7 @@ function getModelStats({
   format,
   source,
   buffer,
+  fileSizeBytes,
   downloadMs,
   parseMs,
   totalMs,
@@ -56,6 +134,7 @@ function getModelStats({
   format: string
   source: ModelSource
   buffer?: ArrayBuffer
+  fileSizeBytes?: number | null
   downloadMs: number | null
   parseMs: number
   totalMs: number
@@ -98,7 +177,7 @@ function getModelStats({
       y: size?.y ?? 0,
       z: size?.z ?? 0,
     },
-    fileSizeBytes: getFileSize(source, buffer),
+    fileSizeBytes: fileSizeBytes ?? getFileSize(source, buffer),
     downloadMs,
     parseMs,
     totalMs,
@@ -131,6 +210,30 @@ export function useCadGeometry(source: ModelSource): CadGeometryState {
     const sourceName = source.kind === "file" ? source.file.name : source.value
     const format = detectModelFormat(sourceName)
     const formatLabel = format?.toUpperCase() ?? "model"
+    const cacheKey = getModelCacheKey(source)
+    const cached = getCachedModel(cacheKey)
+    if (cached) {
+      const model = cloneLoadedModel(cached.model)
+      setState({
+        model,
+        status: "ready",
+        progress: null,
+        stats: getModelStats({
+          model,
+          format: cached.format,
+          source,
+          fileSizeBytes: cached.fileSizeBytes,
+          downloadMs: null,
+          parseMs: 0,
+          totalMs: 0,
+        }),
+        message:
+          source.kind === "file"
+            ? `${cached.format.toUpperCase()} loaded from cache for ${source.file.name}.`
+            : `${cached.format.toUpperCase()} loaded from cache.`,
+      })
+      return
+    }
 
     setState({
       model: null,
@@ -148,10 +251,12 @@ export function useCadGeometry(source: ModelSource): CadGeometryState {
       if (source.kind === "url" && (format === "gltf" || format === "glb")) {
         const downloadStartedAt = performance.now()
         let downloadFinishedAt = downloadStartedAt
+        let loadedBytes = 0
         const model = await parseModelFromUrl(source.value, format, {
           signal: controller.signal,
           onProgress: ({ loaded, total }) => {
             downloadFinishedAt = performance.now()
+            loadedBytes = loaded
             if (disposed || controller.signal.aborted) {
               return
             }
@@ -168,6 +273,7 @@ export function useCadGeometry(source: ModelSource): CadGeometryState {
           model,
           format,
           buffer: undefined,
+          fileSizeBytes: loadedBytes || null,
           downloadMs: downloadFinishedAt - downloadStartedAt,
           parseMs: finishedAt - downloadFinishedAt,
         }
@@ -207,6 +313,7 @@ export function useCadGeometry(source: ModelSource): CadGeometryState {
             model: await parseModelFromBuffer(buffer, format),
             format,
             buffer,
+            fileSizeBytes: buffer.byteLength,
             downloadMs,
             parseMs: performance.now() - parseStartedAt,
           }
@@ -225,6 +332,7 @@ export function useCadGeometry(source: ModelSource): CadGeometryState {
         return {
           ...result,
           buffer,
+          fileSizeBytes: buffer.byteLength,
           downloadMs,
           parseMs: performance.now() - parseStartedAt,
         }
@@ -241,6 +349,7 @@ export function useCadGeometry(source: ModelSource): CadGeometryState {
       return {
         ...result,
         buffer,
+        fileSizeBytes: buffer.byteLength,
         downloadMs,
         parseMs: performance.now() - parseStartedAt,
       }
@@ -248,23 +357,38 @@ export function useCadGeometry(source: ModelSource): CadGeometryState {
 
     loadGeometry()
       .then(
-        ({ model, format: resolvedFormat, buffer, downloadMs, parseMs }) => {
+        ({
+          model,
+          format: resolvedFormat,
+          buffer,
+          fileSizeBytes,
+          downloadMs,
+          parseMs,
+        }) => {
           if (disposed) {
-            model.geometry.dispose()
-            disposeModelObject(model.object)
+            disposeLoadedModel(model)
             return
           }
 
+          const resolvedFileSizeBytes =
+            fileSizeBytes ?? getFileSize(source, buffer)
+          setCachedModel(cacheKey, {
+            model,
+            format: resolvedFormat,
+            fileSizeBytes: resolvedFileSizeBytes,
+          })
+          const displayModel = cloneLoadedModel(model)
           const totalMs = performance.now() - startedAt
           setState({
-            model,
+            model: displayModel,
             status: "ready",
             progress: null,
             stats: getModelStats({
-              model,
+              model: displayModel,
               format: resolvedFormat,
               source,
               buffer,
+              fileSizeBytes: resolvedFileSizeBytes,
               downloadMs,
               parseMs: parseMs ?? totalMs,
               totalMs,
