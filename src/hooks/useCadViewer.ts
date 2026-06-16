@@ -15,6 +15,7 @@ import {
   makeDimensionOverlay,
   makeGrid,
   makeHoverMarker,
+  makePlacementRelationshipOverlay,
 } from "../lib/scene"
 import { useCadGeometry } from "./useCadGeometry"
 import { useDebouncedValue } from "./useDebouncedValue"
@@ -52,6 +53,7 @@ interface UseCadViewerParams {
   boardThickness: number
   localModelFile: File | null
   showBoard: boolean
+  showPlacement: boolean
 }
 
 function formatVector3(vector: THREE.Vector3) {
@@ -63,6 +65,7 @@ export function useCadViewer({
   boardThickness,
   localModelFile,
   showBoard,
+  showPlacement,
 }: UseCadViewerParams): UseCadViewerResult {
   const debouncedCad = useDebouncedValue(cad, 350)
   const debouncedBoardThickness = useDebouncedValue(boardThickness, 350)
@@ -210,7 +213,7 @@ export function useCadViewer({
           debouncedCad.position.z,
         )
         const boardPositionMarker = makeHoverMarker(boardPosition, [
-          `Cad Component Position ${formatVector3(boardPosition)}`,
+          `Position ${formatVector3(boardPosition)}`,
           `Anchor Alignment: ${debouncedCad.anchor_alignment}`,
         ])
         const modelOriginWorld = placement.modelOrigin
@@ -221,6 +224,18 @@ export function useCadViewer({
           `Model Origin ${formatVector3(modelOriginWorld)}`,
           `Model Origin Alignment: ${debouncedCad.model_origin_alignment}`,
         ])
+        const anchorWorld = placement.anchorPoint
+          .clone()
+          .applyEuler(placement.rotation)
+          .add(placement.translation)
+        const anchorMarker = makeHoverMarker(
+          anchorWorld,
+          [
+            `Anchor Point ${formatVector3(anchorWorld)}`,
+            `Anchor Alignment: ${debouncedCad.anchor_alignment}`,
+          ],
+          0xf59e0b,
+        )
         const placedBounds = geometryBounds.boundingBox
           .clone()
           .applyMatrix4(placed.matrixWorld)
@@ -230,6 +245,15 @@ export function useCadViewer({
         if (showDimensions) {
           scene.add(makeDimensionOverlay(placedBounds))
         }
+        if (showPlacement) {
+          scene.add(
+            makePlacementRelationshipOverlay({
+              modelOriginWorld,
+              anchorWorld,
+              componentPosition: boardPosition,
+            }),
+          )
+        }
         scene.add(
           makeBoardNormalArrow(
             modelOriginWorld,
@@ -238,8 +262,16 @@ export function useCadViewer({
         )
 
         return {
-          hoverTargets: [boardPositionMarker.target, modelOriginMarker.target],
-          overlayObjects: [boardPositionMarker.group, modelOriginMarker.group],
+          hoverTargets: [
+            boardPositionMarker.target,
+            modelOriginMarker.target,
+            anchorMarker.target,
+          ],
+          overlayObjects: [
+            boardPositionMarker.group,
+            modelOriginMarker.group,
+            anchorMarker.group,
+          ],
         }
       },
     [
@@ -253,10 +285,12 @@ export function useCadViewer({
       geometry,
       geometryBounds.boundingBox,
       loadedModel,
+      placement.anchorPoint,
       placement.modelOrigin,
       placement.rotation,
       placement.translation,
       showBoard,
+      showPlacement,
     ],
   )
 

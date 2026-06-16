@@ -245,6 +245,27 @@ export function CadComponentWorkbench({
                   editor.updateField("anchor_alignment", value)
                 }
               />
+              <CheckboxField
+                label="show placement relationship"
+                checked={editor.showPlacement}
+                onChange={editor.setShowPlacement}
+              />
+              {editor.showPlacement ? (
+                <div className="placement-key">
+                  <div>
+                    <span className="placement-dot origin" />
+                    <strong>Model Origin</strong>
+                  </div>
+                  <div>
+                    <span className="placement-dot anchor" />
+                    <strong>Anchor</strong>
+                  </div>
+                  <div>
+                    <span className="placement-dot position" />
+                    <strong>Position</strong>
+                  </div>
+                </div>
+              ) : null}
             </Section>
 
             <Section

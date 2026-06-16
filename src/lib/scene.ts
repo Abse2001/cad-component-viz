@@ -206,6 +206,54 @@ function makeLine(points: THREE.Vector3[], color: number) {
   )
 }
 
+function makeDashedLine(points: THREE.Vector3[], color: number) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points)
+  const line = new THREE.Line(
+    geometry,
+    new THREE.LineDashedMaterial({
+      color,
+      dashSize: 1.6,
+      depthTest: false,
+      gapSize: 0.9,
+      transparent: true,
+      opacity: 0.82,
+    }),
+  )
+  line.computeLineDistances()
+  return line
+}
+
+function makePlacementPoint(
+  position: THREE.Vector3,
+  color: number,
+  radius: number,
+) {
+  const group = new THREE.Group()
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(radius * 0.36, 24, 24),
+    new THREE.MeshBasicMaterial({
+      color,
+      depthTest: false,
+    }),
+  )
+  sphere.position.copy(position)
+  group.add(sphere)
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(radius, 0.08, 16, 42),
+    new THREE.MeshBasicMaterial({
+      color,
+      depthTest: false,
+      transparent: true,
+      opacity: 0.86,
+    }),
+  )
+  ring.position.copy(position)
+  group.add(ring)
+
+  return group
+}
+
 function formatDimension(value: number) {
   return `${value.toFixed(2)} mm`
 }
@@ -321,6 +369,29 @@ export function makeDimensionOverlay(bounds: THREE.Box3) {
         .add(new THREE.Vector3(tick * 1.7, 0, 0)),
     ),
   )
+
+  return group
+}
+
+export function makePlacementRelationshipOverlay({
+  modelOriginWorld,
+  anchorWorld,
+  componentPosition,
+}: {
+  modelOriginWorld: THREE.Vector3
+  anchorWorld: THREE.Vector3
+  componentPosition: THREE.Vector3
+}) {
+  const group = new THREE.Group()
+  const originColor = 0xb83280
+  const anchorColor = 0xf59e0b
+  const positionColor = 0x1d5fd0
+
+  group.add(makeLine([modelOriginWorld, anchorWorld], originColor))
+  group.add(makeDashedLine([anchorWorld, componentPosition], positionColor))
+  group.add(makePlacementPoint(modelOriginWorld, originColor, 0.85))
+  group.add(makePlacementPoint(anchorWorld, anchorColor, 1.15))
+  group.add(makePlacementPoint(componentPosition, positionColor, 1.45))
 
   return group
 }
