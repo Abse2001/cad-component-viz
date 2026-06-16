@@ -8,8 +8,6 @@ import {
 } from "../lib/cad"
 import {
   addDefaultLights,
-  makeAxisBadges,
-  makeAxesToBadgePositions,
   makeBoard,
   makeBoardNormalArrow,
   makeDimensionOverlay,
@@ -240,8 +238,6 @@ export function useCadViewer({
           .clone()
           .applyMatrix4(placed.matrixWorld)
 
-        scene.add(makeAxesToBadgePositions(placedBounds, placement.rotation))
-        scene.add(makeAxisBadges(placedBounds, placement.rotation))
         if (showDimensions) {
           scene.add(makeDimensionOverlay(placedBounds))
         }
