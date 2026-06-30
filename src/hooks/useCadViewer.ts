@@ -17,7 +17,7 @@ import {
 } from "../lib/scene"
 import { useCadGeometry } from "./useCadGeometry"
 import { useDebouncedValue } from "./useDebouncedValue"
-import type { CadModelStats, ModelSource } from "../app/types"
+import type { CadModelStats, CadModelWarning, ModelSource } from "../app/types"
 import type { CadComponentInput } from "../types"
 import type { SceneBuildFn } from "../components/SceneCanvas"
 
@@ -44,6 +44,7 @@ export interface UseCadViewerResult {
   progress: number | null
   summary: ViewerSummary
   modelStats: CadModelStats | null
+  warnings: CadModelWarning[]
 }
 
 interface UseCadViewerParams {
@@ -56,6 +57,113 @@ interface UseCadViewerParams {
 
 function formatVector3(vector: THREE.Vector3) {
   return `(${vector.x.toFixed(2)}, ${vector.y.toFixed(2)}, ${vector.z.toFixed(2)})`
+}
+
+function hasMissingNormals(model: THREE.Object3D | null) {
+  if (!model) {
+    return false
+  }
+
+  let missingNormals = false
+  model.traverse((object) => {
+    if (
+      object instanceof THREE.Mesh &&
+      !object.geometry.getAttribute("normal")
+    ) {
+      missingNormals = true
+    }
+  })
+  return missingNormals
+}
+
+function getModelWarnings({
+  source,
+  status,
+  message,
+  stats,
+  model,
+  placedBounds,
+  boardThickness,
+}: {
+  source: ModelSource
+  status: UseCadViewerResult["status"]
+  message: string
+  stats: CadModelStats | null
+  model: THREE.Object3D | null
+  placedBounds: THREE.Box3
+  boardThickness: number
+}): CadModelWarning[] {
+  const warnings: CadModelWarning[] = []
+
+  if (source.kind !== "none" && status === "fallback") {
+    warnings.push({
+      id: "model-load-failed",
+      severity: "error",
+      title: "Model load failed",
+      message,
+    })
+  }
+
+  if (!stats) {
+    return warnings
+  }
+
+  const maxBound = Math.max(stats.bounds.x, stats.bounds.y, stats.bounds.z)
+  const minBound = Math.min(stats.bounds.x, stats.bounds.y, stats.bounds.z)
+  if (stats.meshCount === 0 || stats.triangleCount === 0) {
+    warnings.push({
+      id: "no-mesh",
+      severity: "error",
+      title: "No mesh triangles",
+      message: "The imported model does not contain visible triangle geometry.",
+    })
+  }
+
+  if (maxBound <= 0.001 || minBound <= 0.001) {
+    warnings.push({
+      id: "zero-bounds",
+      severity: "error",
+      title: "Zero-size bounds",
+      message: "One or more model dimensions are effectively zero.",
+    })
+  } else if (maxBound > 1000) {
+    warnings.push({
+      id: "large-scale",
+      severity: "warning",
+      title: "Very large model",
+      message: "The model is over 1000 mm across. Check units or import scale.",
+    })
+  } else if (maxBound < 0.25) {
+    warnings.push({
+      id: "tiny-scale",
+      severity: "warning",
+      title: "Very small model",
+      message:
+        "The model is under 0.25 mm across. Check units or import scale.",
+    })
+  }
+
+  if (hasMissingNormals(model)) {
+    warnings.push({
+      id: "missing-normals",
+      severity: "warning",
+      title: "Missing normals",
+      message:
+        "Some meshes do not provide normals; shading may look incorrect.",
+    })
+  }
+
+  const boardTop = boardThickness / 2
+  if (placedBounds.min.z < boardTop - 0.01) {
+    warnings.push({
+      id: "below-board",
+      severity: "warning",
+      title: "Model below board surface",
+      message: `Lowest point is ${(boardTop - placedBounds.min.z).toFixed(2)} mm below the board top.`,
+    })
+  }
+
+  return warnings
 }
 
 export function useCadViewer({
@@ -97,13 +205,16 @@ export function useCadViewer({
     () => computePlacement(debouncedCad, geometryBounds.boundingBox),
     [debouncedCad, geometryBounds.boundingBox],
   )
-  const sceneBounds = useMemo(() => {
+  const placedModelBounds = useMemo(() => {
     const transform = new THREE.Matrix4().compose(
       placement.translation,
       new THREE.Quaternion().setFromEuler(placement.rotation),
       new THREE.Vector3(1, 1, 1),
     )
-    const bounds = geometryBounds.boundingBox.clone().applyMatrix4(transform)
+    return geometryBounds.boundingBox.clone().applyMatrix4(transform)
+  }, [geometryBounds.boundingBox, placement.rotation, placement.translation])
+  const sceneBounds = useMemo(() => {
+    const bounds = placedModelBounds.clone()
 
     if (showBoard) {
       bounds.union(
@@ -115,13 +226,7 @@ export function useCadViewer({
     }
 
     return bounds
-  }, [
-    debouncedBoardThickness,
-    geometryBounds.boundingBox,
-    placement.rotation,
-    placement.translation,
-    showBoard,
-  ])
+  }, [debouncedBoardThickness, placedModelBounds, showBoard])
 
   const summary = useMemo<ViewerSummary>(() => {
     const sourceType = localModelFile
@@ -289,6 +394,27 @@ export function useCadViewer({
       showPlacement,
     ],
   )
+  const warnings = useMemo(
+    () =>
+      getModelWarnings({
+        source: modelSource,
+        status,
+        message,
+        stats,
+        model: loadedModel?.object ?? null,
+        placedBounds: placedModelBounds,
+        boardThickness: debouncedBoardThickness,
+      }),
+    [
+      debouncedBoardThickness,
+      loadedModel,
+      message,
+      modelSource,
+      placedModelBounds,
+      stats,
+      status,
+    ],
+  )
 
   return {
     title: "Viewer",
@@ -302,5 +428,6 @@ export function useCadViewer({
     progress,
     summary,
     modelStats: stats,
+    warnings,
   }
 }

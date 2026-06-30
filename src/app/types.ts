@@ -32,3 +32,10 @@ export interface CadModelStats {
   parseMs: number
   totalMs: number
 }
+
+export interface CadModelWarning {
+  id: string
+  severity: "warning" | "error"
+  title: string
+  message: string
+}

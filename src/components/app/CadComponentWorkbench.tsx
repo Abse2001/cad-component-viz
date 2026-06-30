@@ -162,6 +162,34 @@ export function CadComponentWorkbench({
                 </div>
               </details>
 
+              <details className="import-warnings-panel">
+                <summary className="import-warnings-header">
+                  <span className="summary-label">Import Warnings</span>
+                  <strong>
+                    {viewer.warnings.length === 0
+                      ? "None"
+                      : `${viewer.warnings.length} issue${viewer.warnings.length === 1 ? "" : "s"}`}
+                  </strong>
+                </summary>
+                {viewer.warnings.length === 0 ? (
+                  <p className="import-warnings-empty">
+                    No suspicious import or placement issues detected.
+                  </p>
+                ) : (
+                  <div className="import-warnings-list">
+                    {viewer.warnings.map((warning) => (
+                      <article
+                        className={`import-warning ${warning.severity}`}
+                        key={warning.id}
+                      >
+                        <strong>{warning.title}</strong>
+                        <p>{warning.message}</p>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </details>
+
               <div className="actions hero-actions">
                 <button
                   type="button"
